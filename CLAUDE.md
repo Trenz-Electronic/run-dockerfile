@@ -36,6 +36,8 @@ The script parses special comment directives from Dockerfiles:
 
 **ENV Preservation**: `ENV` vars defined in the Dockerfile (after the last `FROM`) are automatically preserved across `su` inside the container.
 
+**No shell expansion in directive values**: `#option:`, `#mount:`, `#copy.home:`, etc. are parsed with `grep`/`sed`, not evaluated by a shell, so values like `-e DISPLAY=$DISPLAY` are passed literally. To forward a host env var, use `-e VARNAME` (no `=value`) so docker inherits the value from the docker client's environment. The exception is `#usermount:`, which explicitly expands a small allowlist of env vars (`$HOME`, etc.).
+
 **Privilege De-escalation**: The script uses `su` (not `sudo`) to drop privileges from root to the container user. This means containers do not need `sudo` installed. If `#sudo: all` is specified, a sudoers entry is created allowing passwordless sudo (requires sudo to be installed in the image).
 
 ## Architecture

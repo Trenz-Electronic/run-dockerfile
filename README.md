@@ -212,7 +212,7 @@ docker-booster can run X11 applications with minimal configuration:
 ```dockerfile
 # X11 Application Container
 #copy.home: .Xauthority
-#option: -e DISPLAY=$DISPLAY
+#option: -e DISPLAY
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y \
