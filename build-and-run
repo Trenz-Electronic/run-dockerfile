@@ -342,17 +342,20 @@ if [ -f "$dir/Dockerfile" ]; then
   fi
 fi
 
-# Function to find .git directory by traversing up from current directory
+# Function to find the git repository root by traversing up from a directory.
+# `.git` is a directory in a normal checkout and a regular file (gitlink) in a
+# worktree, so test with -e rather than -d. Always returns 0 with the repo
+# root on stdout (or empty stdout when not in a repo) - returning non-zero
+# would trip `set -e` at the command-substitution call site.
 find_git_root() {
   search_dir="$1"
   while [ "$search_dir" != "/" ]; do
-    if [ -d "$search_dir/.git" ]; then
+    if [ -e "$search_dir/.git" ]; then
       echo "$search_dir"
       return 0
     fi
     search_dir=$(dirname "$search_dir")
   done
-  return 1
 }
 
 # Determine mount directory based on #mount: directives or default behavior
