@@ -131,9 +131,11 @@ In this example, there are two license files copied over using #copy.home:
 FROM ubuntu:22.04
 ```
 
-Please note that changes made to these files in the container will not be reflected in the host system.
+The files are collected at **run time**, not build time — the image itself never contains them. On every `./run` invocation, build-and-run tars the listed files on the host (just before `docker run`), bind-mounts the tarball into the container, and the entry script extracts it into the in-container user's `$HOME`. This means:
 
-Should the files not exist, it is an error.
+- The host files do **not** need to exist when the image is being built.
+- Each `./run` invocation **does** require all listed files; if any is missing, `build-and-run` exits with an error before the container starts.
+- Changes made to these files inside the container are not propagated back to the host.
 
 ### Mount specific directories
 

@@ -31,7 +31,7 @@ The script parses special comment directives from Dockerfiles:
 - `#mount:` accepts keywords: `.git` (git repo root), `pwd` (current directory), `home` (home directory)
 - FIRST-found semantics: checks keywords in order, uses first match
 - Multiple `#mount:` directives accumulate keywords
-- `#copy.home:` uses tar to bundle files, extracts to container $HOME after user creation
+- `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data.
 - **Default behavior** (no `#mount:` directive): Try `.git` first, fall back to `pwd` (secure by default, no $HOME exposure)
 
 **ENV Preservation**: `ENV` vars defined in the Dockerfile (after the last `FROM`) are automatically preserved across `su` inside the container.
