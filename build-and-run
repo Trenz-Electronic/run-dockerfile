@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # docker-booster - Docker Container Manager with Auto-build
 # https://github.com/Trenz-Electronic/docker-booster
@@ -110,7 +110,7 @@ expand_usermount_path() {
   printf '%s' "$_eu_p"
 }
 
-myname=$(basename $0)
+myname=$(basename "$0")
 
 # Are we the user command to be executed?
 if [ x"${myname}" = x"user-command" ]; then
@@ -175,17 +175,20 @@ if [ x"${myname}" = x"user-command" ]; then
     cd - >/dev/null
   fi
 
-  # Execute the command as the requested user
-  # Use "$@" instead of $* to preserve argument boundaries
-  # Build environment preservation arguments
-  ENV_ARGS=""
+  # Execute the command as the requested user.
+  #
+  # NOTE: this branch runs under the *container's* /bin/sh (the image is started
+  # with `--entrypoint /bin/sh ... /bin/user-command`), so it must stay POSIX and
+  # must not use any bash-only syntax. "$@" currently holds the user's command and
+  # its arguments. Prepend the preserved environment as VAR=value positional
+  # parameters so that values containing spaces survive the su boundary intact
+  # (they ride the real argument vector instead of being re-split out of a string).
   if [ -n "$DOCKER_PRESERVE_ENV" ]; then
-    # Parse comma-separated list and build "VAR=$VAR" arguments
     OLD_IFS="$IFS"
     IFS=','
     for var in $DOCKER_PRESERVE_ENV; do
-      eval "val=\$$var"
-      ENV_ARGS="$ENV_ARGS $var=$val"
+      eval "val=\$$var"          # assignment RHS is not word-split, so IFS=',' is safe here
+      set -- "$var=$val" "$@"    # order among independent env assignments does not matter
     done
     IFS="$OLD_IFS"
   fi
@@ -195,154 +198,159 @@ if [ x"${myname}" = x"user-command" ]; then
     >&2 echo "ERROR: 'su' command not found in container"
     exit 1
   fi
-  exec su -s /bin/sh "$USER" -c "exec env $ENV_ARGS \"\$@\"" -- sh "$@"
+  # Single-quote the -c body so the *inner* shell expands "$@" (= the VAR=value
+  # pairs followed by the user command). env reads leading name=value as assignments.
+  exec su -s /bin/sh "$USER" -c 'exec env "$@"' -- sh "$@"
   >&2 echo "Exec failed somehow. Error code: $?"
   exit 3
 fi
 
-real_self=$(realpath --no-symlinks $0)
-dir=$(dirname ${real_self})
-tag=$(basename $dir)
+real_self=$(realpath --no-symlinks "$0")
+dir=$(dirname "${real_self}")
+tag=$(basename "$dir")
 
-# Parse command-line options meant for docker
-CMDLINE_ENV_ARGS=""
+# Parse command-line options meant for docker.
+# Args are accumulated into bash arrays (not strings) so values containing
+# spaces or glob characters are passed to docker verbatim. CMDLINE_ENV_VARS
+# stays a comma-separated string because it is data (a list of variable names).
+CMDLINE_ENV_ARGS=()
 CMDLINE_ENV_VARS=""
-CMDLINE_DOCKER_ARGS=""
+CMDLINE_DOCKER_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -e)
       # -e VAR=val
       shift
-      CMDLINE_ENV_ARGS="$CMDLINE_ENV_ARGS -e $1"
+      CMDLINE_ENV_ARGS+=(-e "$1")
       CMDLINE_ENV_VARS="$CMDLINE_ENV_VARS,$(echo "$1" | cut -d= -f1)"
       shift
       ;;
     --env=*)
       # --env=VAR=val
       val="${1#--env=}"
-      CMDLINE_ENV_ARGS="$CMDLINE_ENV_ARGS -e $val"
+      CMDLINE_ENV_ARGS+=(-e "$val")
       CMDLINE_ENV_VARS="$CMDLINE_ENV_VARS,$(echo "$val" | cut -d= -f1)"
       shift
       ;;
     --env)
       # --env VAR=val
       shift
-      CMDLINE_ENV_ARGS="$CMDLINE_ENV_ARGS -e $1"
+      CMDLINE_ENV_ARGS+=(-e "$1")
       CMDLINE_ENV_VARS="$CMDLINE_ENV_VARS,$(echo "$1" | cut -d= -f1)"
       shift
       ;;
     -v|--volume)
       # -v /host:/container or --volume /host:/container
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS -v $1"
+      CMDLINE_DOCKER_ARGS+=(-v "$1")
       shift
       ;;
     --volume=*)
       # --volume=/host:/container
       val="${1#--volume=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS -v $val"
+      CMDLINE_DOCKER_ARGS+=(-v "$val")
       shift
       ;;
     -p|--publish)
       # -p 8080:80 or --publish 8080:80
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS -p $1"
+      CMDLINE_DOCKER_ARGS+=(-p "$1")
       shift
       ;;
     --publish=*)
       # --publish=8080:80
       val="${1#--publish=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS -p $val"
+      CMDLINE_DOCKER_ARGS+=(-p "$val")
       shift
       ;;
     -w|--workdir)
       # -w /path or --workdir /path
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS -w $1"
+      CMDLINE_DOCKER_ARGS+=(-w "$1")
       shift
       ;;
     --workdir=*)
       # --workdir=/path
       val="${1#--workdir=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS -w $val"
+      CMDLINE_DOCKER_ARGS+=(-w "$val")
       shift
       ;;
     --network|--net)
       # --network host or --net host
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --network $1"
+      CMDLINE_DOCKER_ARGS+=(--network "$1")
       shift
       ;;
     --network=*|--net=*)
       # --network=host
       val="${1#--network=}"
       val="${val#--net=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --network $val"
+      CMDLINE_DOCKER_ARGS+=(--network "$val")
       shift
       ;;
     --device)
       # --device /dev/ttyUSB0
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --device $1"
+      CMDLINE_DOCKER_ARGS+=(--device "$1")
       shift
       ;;
     --device=*)
       # --device=/dev/ttyUSB0
       val="${1#--device=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --device $val"
+      CMDLINE_DOCKER_ARGS+=(--device "$val")
       shift
       ;;
     --cpus)
       # --cpus 2
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --cpus $1"
+      CMDLINE_DOCKER_ARGS+=(--cpus "$1")
       shift
       ;;
     --cpus=*)
       # --cpus=2
       val="${1#--cpus=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --cpus $val"
+      CMDLINE_DOCKER_ARGS+=(--cpus "$val")
       shift
       ;;
     -m|--memory)
       # -m 1g or --memory 1g
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --memory $1"
+      CMDLINE_DOCKER_ARGS+=(--memory "$1")
       shift
       ;;
     --memory=*)
       # --memory=1g
       val="${1#--memory=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --memory $val"
+      CMDLINE_DOCKER_ARGS+=(--memory "$val")
       shift
       ;;
     --gpus)
       # --gpus all
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --gpus $1"
+      CMDLINE_DOCKER_ARGS+=(--gpus "$1")
       shift
       ;;
     --gpus=*)
       # --gpus=all
       val="${1#--gpus=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --gpus $val"
+      CMDLINE_DOCKER_ARGS+=(--gpus "$val")
       shift
       ;;
     --name)
       # --name mycontainer
       shift
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --name $1"
+      CMDLINE_DOCKER_ARGS+=(--name "$1")
       shift
       ;;
     --name=*)
       # --name=mycontainer
       val="${1#--name=}"
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS --name $val"
+      CMDLINE_DOCKER_ARGS+=(--name "$val")
       shift
       ;;
     --privileged|--read-only)
       # Boolean flags
-      CMDLINE_DOCKER_ARGS="$CMDLINE_DOCKER_ARGS $1"
+      CMDLINE_DOCKER_ARGS+=("$1")
       shift
       ;;
     -*)
@@ -459,7 +467,7 @@ else
 fi
 
 # Optimized inspect: get architecture, creation time, and context hash in one call
-INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{.Created}}|{{index .Config.Labels "docker-booster.context-hash"}}' ${tag} 2>/dev/null) || true
+INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{.Created}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
 
 if [ -n "$INSPECT_DATA" ]; then
   IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
@@ -509,7 +517,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
   BUILD_PLATFORM=""
   HTTP_SERVERS=""
   HTTP_SERVER_PIDS=""
-  BUILD_ARGS=""
+  BUILD_ARGS=()
 
   if [ -f "$dir/Dockerfile" ]; then
     PLATFORM_LINE=$(head -n 10 "$dir/Dockerfile" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
@@ -608,7 +616,7 @@ PYEOF
             ;;
         esac
         SERVER_URL="http://${HOST_IP}:${SERVER_PORT}"
-        BUILD_ARGS="$BUILD_ARGS --build-arg HTTP_${HTTP_KEY}=${SERVER_URL}"
+        BUILD_ARGS+=(--build-arg "HTTP_${HTTP_KEY}=${SERVER_URL}")
 
         >&2 echo "Started HTTP server for ${HTTP_KEY}: ${SERVER_URL} (PID: ${SERVER_PID})"
         cd - >/dev/null
@@ -630,29 +638,28 @@ EOF
     }
     trap cleanup_http_servers EXIT INT TERM
 
-    # Build docker image with collected options
-    BUILD_CMD="docker build -t $tag --progress=plain"
+    # Build docker image with collected options. Assembled as an array and
+    # invoked directly (no eval), so paths/values are passed verbatim.
+    BUILD_CMD=(docker build -t "$tag" --progress=plain)
     if [ -n "$BUILD_PLATFORM" ]; then
       # Normalize to OS/arch form - see comment near PLATFORM_ARG below.
       # `# platform: arm64` is accepted with the legacy image store but
       # fails as `--platform=arm64` against containerd-backed stores
       # (Docker Desktop), which need `linux/arm64`.
       case "$BUILD_PLATFORM" in
-        */*) BUILD_CMD="$BUILD_CMD --platform=${BUILD_PLATFORM}" ;;
-        *)   BUILD_CMD="$BUILD_CMD --platform=linux/${BUILD_PLATFORM}" ;;
+        */*) BUILD_CMD+=(--platform="${BUILD_PLATFORM}") ;;
+        *)   BUILD_CMD+=(--platform="linux/${BUILD_PLATFORM}") ;;
       esac
     fi
-    if [ -n "$BUILD_ARGS" ]; then
-      BUILD_CMD="$BUILD_CMD $BUILD_ARGS"
-    fi
+    BUILD_CMD+=("${BUILD_ARGS[@]}")
     # Add context hash label for change detection
     if [ -n "$CONTEXT_HASH" ]; then
-      BUILD_CMD="$BUILD_CMD --label docker-booster.context-hash=${CONTEXT_HASH}"
+      BUILD_CMD+=(--label "docker-booster.context-hash=${CONTEXT_HASH}")
     fi
-    BUILD_CMD="$BUILD_CMD $dir"
+    BUILD_CMD+=("$dir")
 
-    >&2 echo "Running: $BUILD_CMD"
-    eval $BUILD_CMD
+    >&2 echo "Running: ${BUILD_CMD[*]}"
+    "${BUILD_CMD[@]}"
     BUILD_RESULT=$?
 
     cleanup_http_servers
@@ -662,20 +669,20 @@ EOF
       exit $BUILD_RESULT
     fi
   else
-    docker build -t $tag --progress=plain $dir
+    docker build -t "$tag" --progress=plain "$dir"
   fi
 
   # Update architecture after build (reuse optimized inspect format)
-  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{.Created}}|{{index .Config.Labels "docker-booster.context-hash"}}' ${tag} 2>/dev/null) || true
+  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{.Created}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
   if [ -n "$INSPECT_DATA" ]; then
     IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
   fi
 fi
 
 # Check if stdin is a TTY using POSIX test
-TFLAG=""
+TFLAG=()
 if [ -t 0 ]; then
-  TFLAG="-t"
+  TFLAG=(-t)
 fi
 
 # Set platform argument only if IMGARCH is not empty.
@@ -684,16 +691,16 @@ fi
 # by Docker Desktop) match images by full "os/arch" - a bare "arm64" misses
 # the manifest's "linux/arm64" entry and `docker run` then tries to pull
 # from a registry. Normalize to "linux/<arch>" when no slash is present.
-PLATFORM_ARG=""
+PLATFORM_ARG=()
 if [ -n "$IMGARCH" ]; then
   case "$IMGARCH" in
-    */*) PLATFORM_ARG="--platform ${IMGARCH}" ;;
-    *)   PLATFORM_ARG="--platform linux/${IMGARCH}" ;;
+    */*) PLATFORM_ARG=(--platform "${IMGARCH}") ;;
+    *)   PLATFORM_ARG=(--platform "linux/${IMGARCH}") ;;
   esac
 fi
 
 # Handle #copy.home: files - create tar archive
-COPY_HOME_VARG=""
+COPY_HOME_VARG=()
 COPY_HOME_TAR=""
 if [ -n "$COPY_HOME_FILES" ]; then
   COPY_HOME_TAR="/tmp/docker-booster-home-files-$$.tar.gz"
@@ -701,7 +708,7 @@ if [ -n "$COPY_HOME_FILES" ]; then
 
   # Try to create tar, check for missing files
   if tar czf "$COPY_HOME_TAR" $COPY_HOME_FILES 2>/dev/null; then
-    COPY_HOME_VARG="-v $COPY_HOME_TAR:/tmp/home-files.tar.gz:ro"
+    COPY_HOME_VARG=(-v "$COPY_HOME_TAR:/tmp/home-files.tar.gz:ro")
     info "Collected home files for container: $COPY_HOME_FILES"
   else
     # Tar failed, list missing files
@@ -717,7 +724,7 @@ if [ -n "$COPY_HOME_FILES" ]; then
 fi
 
 # Process #usermount: directives - expand env vars, create dirs, build volume args
-USERMOUNT_VARGS=""
+USERMOUNT_VARGS=()
 if [ -n "$USERMOUNT_PATHS" ]; then
   for path in $USERMOUNT_PATHS; do
     # Expand environment-variable references in path safely (no shell eval)
@@ -726,28 +733,43 @@ if [ -n "$USERMOUNT_PATHS" ]; then
       mkdir -p "$expanded_path"
       >&2 echo "Created directory: $expanded_path"
     fi
-    USERMOUNT_VARGS="$USERMOUNT_VARGS -v $expanded_path:$expanded_path"
+    USERMOUNT_VARGS+=(-v "$expanded_path:$expanded_path")
   done
-  if [ -n "$USERMOUNT_VARGS" ]; then
-    info "Mounting user directories:$USERMOUNT_VARGS"
+  if [ ${#USERMOUNT_VARGS[@]} -gt 0 ]; then
+    info "Mounting user directories: ${USERMOUNT_VARGS[*]}"
   fi
 fi
 
 # Parse #option: directives for additional docker run options
-DOCKER_OPTIONS=""
+DOCKER_OPTIONS=()
 OPTION_ENV_VARS=""
 if [ -f "$dir/Dockerfile" ]; then
   OPTION_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*option:[[:space:]]*' || true)
   if [ -n "$OPTION_LINES" ]; then
-    DOCKER_OPTIONS=$(echo "$OPTION_LINES" | sed -E 's/^#[[:space:]]*option:[[:space:]]*//' | tr '\n' ' ')
-    # Extract env var names from -e options in DOCKER_OPTIONS
-    OPTION_ENV_VARS=$(echo "$DOCKER_OPTIONS" | grep -oE '(-e|--env=?)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' | sed -E 's/(-e|--env=?)[[:space:]]*//' | sed 's/=$//' | tr '\n' ',' | sed 's/,$//')
+    # Strip the directive prefix from each line.
+    OPTION_VALUES=$(echo "$OPTION_LINES" | sed -E 's/^#[[:space:]]*option:[[:space:]]*//')
+    # Split each option line into words on whitespace with globbing disabled, so
+    # a value like `-e PATTERN=*.txt` is passed literally and never expanded
+    # against the host filesystem. (`read` does not glob; `set -f` guards the
+    # array assignment. The heredoc expands $OPTION_VALUES exactly once, so a
+    # literal `$DISPLAY` inside an #option value is preserved, not re-expanded.)
+    set -f
+    while IFS= read -r _opt_line; do
+      [ -n "$_opt_line" ] || continue
+      # shellcheck disable=SC2206  # intentional word-split; globbing disabled above
+      DOCKER_OPTIONS+=( $_opt_line )
+    done <<EOF
+$OPTION_VALUES
+EOF
+    set +f
+    # Extract env var names from -e/--env options for ENV preservation.
+    OPTION_ENV_VARS=$(echo "$OPTION_VALUES" | grep -oE '(-e|--env=?)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' | sed -E 's/(-e|--env=?)[[:space:]]*//' | sed 's/=$//' | tr '\n' ',' | sed 's/,$//')
   fi
 fi
 
 # Parse #sudo: directive for sudoers configuration
 SUDO_MODE=""
-SUDO_MODE_ARG=""
+SUDO_MODE_ARG=()
 if [ -f "$dir/Dockerfile" ]; then
   SUDO_LINE=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*sudo:[[:space:]]*' | tail -1 || true)
   if [ -n "$SUDO_LINE" ]; then
@@ -755,12 +777,12 @@ if [ -f "$dir/Dockerfile" ]; then
   fi
 fi
 if [ "$SUDO_MODE" = "all" ]; then
-  SUDO_MODE_ARG="-e DOCKER_SUDO_MODE=all"
+  SUDO_MODE_ARG=(-e DOCKER_SUDO_MODE=all)
 fi
 
 # Auto-preserve ENV vars from Dockerfile across su
 # Extract ENV var names after the last FROM line
-PRESERVE_ENV_ARG=""
+PRESERVE_ENV_ARG=()
 ENV_VARS=""
 if [ -f "$dir/Dockerfile" ]; then
   # Get line number of last FROM, then extract ENV lines after it
@@ -785,7 +807,7 @@ for extra_vars in "$CMDLINE_ENV_VARS" "$OPTION_ENV_VARS"; do
   fi
 done
 if [ -n "$ENV_VARS" ]; then
-  PRESERVE_ENV_ARG="-e DOCKER_PRESERVE_ENV=$ENV_VARS"
+  PRESERVE_ENV_ARG=(-e "DOCKER_PRESERVE_ENV=$ENV_VARS")
 fi
 
 # Cleanup function for temporary tar file
@@ -796,20 +818,22 @@ cleanup_copy_home() {
 }
 trap cleanup_copy_home EXIT INT TERM
 
-# Use "$@" instead of $* to preserve argument boundaries
-exec docker run --rm -i $TFLAG \
-  -v ${real_self}:/bin/user-command \
-  -v $MDIR:$MDIR \
-  $COPY_HOME_VARG \
-  $USERMOUNT_VARGS \
-  -w $PWD \
+# All accumulated docker arguments are bash arrays expanded as "${arr[@]}", and
+# every path/value is quoted, so spaces and glob characters are passed verbatim.
+# "$@" (not $*) preserves the user command's argument boundaries.
+exec docker run --rm -i "${TFLAG[@]}" \
+  -v "${real_self}:/bin/user-command" \
+  -v "$MDIR:$MDIR" \
+  "${COPY_HOME_VARG[@]}" \
+  "${USERMOUNT_VARGS[@]}" \
+  -w "$PWD" \
   --entrypoint /bin/sh \
-  $PLATFORM_ARG \
-  $PRESERVE_ENV_ARG \
-  $SUDO_MODE_ARG \
-  $CMDLINE_ENV_ARGS \
-  $CMDLINE_DOCKER_ARGS \
-  $DOCKER_OPTIONS \
-  $tag \
-  /bin/user-command $USER "$(id -u)" "$(id -g)" "$(id -gn)" $HOME "$@"
+  "${PLATFORM_ARG[@]}" \
+  "${PRESERVE_ENV_ARG[@]}" \
+  "${SUDO_MODE_ARG[@]}" \
+  "${CMDLINE_ENV_ARGS[@]}" \
+  "${CMDLINE_DOCKER_ARGS[@]}" \
+  "${DOCKER_OPTIONS[@]}" \
+  "$tag" \
+  /bin/user-command "$USER" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@"
 

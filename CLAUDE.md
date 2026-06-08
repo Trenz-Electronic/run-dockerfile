@@ -10,7 +10,8 @@ docker-booster is a single-script Docker workflow tool that automates image buil
 
 ## Key Files
 
-- `build-and-run` - The main script (POSIX shell). This is the entire tool.
+- `build-and-run` - The main script. This is the entire tool. The host side requires
+  **bash** (`#!/usr/bin/env bash`); see the "Two shells" note under Architecture.
 - `README.md` - User documentation. In the README.md, the focus is on what it does for users, including technical details only when necessary for using the docker-booster. The implementation details should go into CLAUDE.md.
 
 ## Dockerfile Directive Syntax
@@ -45,6 +46,22 @@ The script parses special comment directives from Dockerfiles:
 The script operates in two modes based on `$0`:
 1. **Normal mode** - Parses Dockerfile, builds image if needed, runs container
 2. **user-command mode** - Runs inside container, creates user matching host UID/GID/group, executes command
+
+**Two shells (important constraint).** The same file runs under two different shells:
+- **Normal mode runs on the host under bash** (via the `./run` symlink → the script's
+  shebang). Only this part may use bash features. It builds the `docker build` / `docker
+  run` invocations as **bash arrays** expanded with `"${arr[@]}"` (e.g.
+  `CMDLINE_DOCKER_ARGS`, `USERMOUNT_VARGS`, `DOCKER_OPTIONS`, `BUILD_CMD`), so paths and
+  values containing spaces or glob characters are passed verbatim and **no `eval`** is
+  used for the run/build commands.
+- **user-command mode runs inside the container under the container's `/bin/sh`** (the
+  container is started with `--entrypoint /bin/sh ... /bin/user-command`, which ignores
+  the script's shebang). This branch (everything before the early-return `fi`) **must stay
+  POSIX sh** — busybox ash / dash. It is safe to mix the two because the user-command
+  branch always `exec`s/`exit`s before any bash-only code, so the container shell never
+  parses the array syntax below it. **When editing: keep all bashisms after that branch.**
+  Preserved env vars are carried across the `su` privilege drop as positional parameters
+  (`set -- "$var=$val" "$@"`), so values containing spaces survive intact.
 
 User/group mapping preserves host username, UID, GID, and group name. If the group name already exists in the container with a different GID, it's renamed to `${groupname}_${gid}`.
 
@@ -124,4 +141,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0018_mount_directives` - Tests `#mount:` directive (pwd, .git, home, FIRST-found semantics)
 - `0019_copy_home` - Tests `#copy.home:` directive (single file, multiple files, missing file error)
 - `0020_sudo_directive` - Tests `#sudo: all` directive (su-based privilege drop, optional sudoers configuration)
-- `0021_usermount_directive` - Tests `#usermount:` directive (directory creation, env var expansion, multiple paths)
+- `0021_usermount_directive` - Tests `#usermount:` directive (directory creation, env var expansion, multiple paths, command-substitution safety)
+- `0022_space_in_path` - Tests a host bind-mount path containing a space is passed to docker verbatim (bash-array quoting)
+- `0023_glob_in_option` - Tests a glob character in an `#option:` value is passed literally, not expanded against the host filesystem
+- `0024_env_value_with_space` - Tests an env value with a space survives end-to-end through both shells (host array + container-side `set --` across `su`)
