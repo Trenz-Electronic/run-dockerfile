@@ -60,6 +60,11 @@ The script implements hash-based rebuild detection:
 - No external cache files needed - hash stored in Docker image metadata
 - Single optimized `docker inspect` call retrieves architecture, creation time, and hash label
 
+**Design note — the hash is deliberately "dumb":** It hashes the raw bytes of the whole build context, including the Dockerfile and the run-time-only directives in it (`#mount:`, `#copy.home:`, `#usermount:`, `#option:`, `#sudo:`). Editing one of those directives therefore triggers a rebuild even though it does not affect the built image. This is intentional and should not be "optimized" by filtering those lines out of the hash:
+- The spurious rebuild is nearly free. Docker strips comment lines during parsing, so they never participate in any layer's cache key; the forced `docker build` hits cache on every layer and finishes in ~1s. The only real waste is build-phase wrapper work (notably `#http.static:` server startup).
+- The failure modes are asymmetric. Over-hashing (a line that did not need to trigger a rebuild) costs a cheap rebuild; under-hashing (excluding a line that *does* affect the build) yields a stale image and silently wrong behavior. Hashing everything keeps the safe default and makes the hash obviously correct.
+- Filtering would couple the hash to the directive grammar, forcing every new directive to be re-classified as build-affecting or run-time. If spurious rebuilds ever become a real pain point, the cheaper fix is to skip the build-phase wrapper work on an all-cache-hit build, not to teach the integrity hash about directive semantics.
+
 ### Verbose Mode
 
 The script is quiet by default, suppressing informational messages during normal operation. Set `DOCKER_BOOSTER_VERBOSE=1` in the environment to enable them.
