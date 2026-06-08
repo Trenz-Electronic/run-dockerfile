@@ -149,10 +149,11 @@ Environment variables are expanded, so you can use $HOME, $PWD, etc.:
 FROM ubuntu:22.04
 ```
 
-Multiple paths can be specified on a single line or across multiple directives:
+Each `#usermount:` line is a single path (which may contain spaces); use multiple lines for multiple paths:
 
 ```dockerfile
-#usermount: $HOME/.cache/pip $HOME/.cache/npm
+#usermount: $HOME/.cache/pip
+#usermount: $HOME/.cache/npm
 FROM ubuntu:22.04
 ```
 

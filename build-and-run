@@ -369,7 +369,7 @@ CMDLINE_ENV_VARS=$(echo "$CMDLINE_ENV_VARS" | sed 's/^,//')
 # Parse #mount:, #copy.home:, and #usermount: directives from Dockerfile
 MOUNT_KEYWORDS=""
 COPY_HOME_FILES=""
-USERMOUNT_PATHS=""
+USERMOUNT_PATHS=()
 if [ -f "$dir/Dockerfile" ]; then
   # Parse #mount: directives (first 20 lines, multiple directives allowed)
   MOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*mount:[[:space:]]*' || true)
@@ -383,11 +383,14 @@ if [ -f "$dir/Dockerfile" ]; then
     COPY_HOME_FILES=$(echo "$COPY_HOME_LINES" | sed -E 's/^#[[:space:]]*copy\.home:[[:space:]]*//' | tr '\n' ' ')
   fi
 
-  # Parse #usermount: directives (first 20 lines, multiple directives allowed)
-  USERMOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*usermount:[[:space:]]*' || true)
-  if [ -n "$USERMOUNT_LINES" ]; then
-    USERMOUNT_PATHS=$(echo "$USERMOUNT_LINES" | sed -E 's/^#[[:space:]]*usermount:[[:space:]]*//' | tr '\n' ' ')
-  fi
+  # Parse #usermount: directives (first 20 lines, multiple directives allowed).
+  # Each line specifies exactly ONE path (the whole value after the colon,
+  # trimmed), so paths may contain spaces. Use multiple #usermount: lines for
+  # multiple paths.
+  while IFS= read -r _um_line; do
+    _um_path=$(printf '%s' "$_um_line" | sed -E 's/^#[[:space:]]*usermount:[[:space:]]*//; s/[[:space:]]+$//')
+    [ -n "$_um_path" ] && USERMOUNT_PATHS+=("$_um_path")
+  done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*usermount:[[:space:]]*' || true)
 fi
 
 # Function to find the git repository root by traversing up from a directory.
@@ -725,8 +728,8 @@ fi
 
 # Process #usermount: directives - expand env vars, create dirs, build volume args
 USERMOUNT_VARGS=()
-if [ -n "$USERMOUNT_PATHS" ]; then
-  for path in $USERMOUNT_PATHS; do
+if [ ${#USERMOUNT_PATHS[@]} -gt 0 ]; then
+  for path in "${USERMOUNT_PATHS[@]}"; do
     # Expand environment-variable references in path safely (no shell eval)
     expanded_path=$(expand_usermount_path "$path")
     if [ ! -d "$expanded_path" ]; then

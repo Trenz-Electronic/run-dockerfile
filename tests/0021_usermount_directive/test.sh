@@ -3,8 +3,9 @@
 # Verifies that:
 # - Directories are created if they don't exist (as current user)
 # - Existing directories are mounted without error
-# - Multiple directories can be mounted
+# - Multiple directories can be mounted (one path per #usermount: line)
 # - Environment variables are expanded ($HOME, $PWD)
+# - A path containing a space is mounted as a single path
 # - Command substitution in a directive is NOT evaluated on the host
 
 set -e
@@ -14,13 +15,16 @@ fail=0
 # Unique test directory names to avoid conflicts
 TESTDIR1="$HOME/.docker-booster-test-0021-$$"
 TESTDIR2="$HOME/.docker-booster-test-0021-multi-$$"
+# Exported so build-and-run can expand it inside a #usermount: directive (Test 6).
+# Deliberately contains a space.
+export DB_SPACE_DIR="$HOME/.docker-booster spacetest-0021-$$"
 
 # Cleanup function
 cleanup() {
-    rm -rf "$TESTDIR1" "$TESTDIR2"
-    rm -rf test_create test_existing test_multiple test_envvar test_injection
+    rm -rf "$TESTDIR1" "$TESTDIR2" "$DB_SPACE_DIR"
+    rm -rf test_create test_existing test_multiple test_envvar test_injection test_space
     rm -f "$HOME"/.docker-booster-pwned-0021-*
-    docker rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi test_injection 2>/dev/null || true
+    docker rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi test_injection test_space 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -104,12 +108,13 @@ fi
 cd ..
 
 echo ""
-echo "=== Test 3: Mount multiple directories ==="
+echo "=== Test 3: Mount multiple directories (one per line) ==="
 rm -rf "$TESTDIR1" "$TESTDIR2"
 mkdir -p test_multiple
 cd test_multiple
 cat > Dockerfile <<EOF
-#usermount: $TESTDIR1 $TESTDIR2
+#usermount: $TESTDIR1
+#usermount: $TESTDIR2
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
@@ -183,6 +188,49 @@ if [ -e "$MARKER" ]; then
     fail=1
 else
     echo "PASS: command substitution not executed (treated as literal data)"
+fi
+cd ..
+
+echo ""
+echo "=== Test 6: Path containing a space (single path per line) ==="
+rm -rf "$DB_SPACE_DIR"
+mkdir -p test_space
+cd test_space
+# Single-quoted heredoc: $DB_SPACE_DIR stays literal in the Dockerfile and is
+# expanded by build-and-run (it is exported) to a path containing a space.
+cat > Dockerfile <<'EOF'
+#usermount: $DB_SPACE_DIR
+FROM ubuntu:22.04
+EOF
+ln -sf ../../../build-and-run run
+
+# Pass the spaced path as a positional arg ($1) to avoid nested-quoting issues.
+output=$(./run sh -c 'test -d "$1" && echo MOUNT_OK' _ "$DB_SPACE_DIR" 2>&1)
+if echo "$output" | grep -q "MOUNT_OK"; then
+    echo "PASS: spaced path mounted as a single directory inside container"
+else
+    echo "FAIL: spaced path not mounted"
+    echo "Output: $output"
+    fail=1
+fi
+
+# Verify the directory was created on host (not split into two)
+if [ -d "$DB_SPACE_DIR" ]; then
+    echo "PASS: spaced directory created on host"
+else
+    echo "FAIL: spaced directory not created on host"
+    fail=1
+fi
+
+# Verify ownership (current user, not root)
+if [ -d "$DB_SPACE_DIR" ]; then
+    owner_uid=$(stat -c %u "$DB_SPACE_DIR")
+    if [ "$owner_uid" = "$(id -u)" ]; then
+        echo "PASS: spaced directory owned by current user"
+    else
+        echo "FAIL: spaced directory owned by $owner_uid, expected $(id -u)"
+        fail=1
+    fi
 fi
 cd ..
 
