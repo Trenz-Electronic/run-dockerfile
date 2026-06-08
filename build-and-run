@@ -324,21 +324,21 @@ COPY_HOME_FILES=""
 USERMOUNT_PATHS=""
 if [ -f "$dir/Dockerfile" ]; then
   # Parse #mount: directives (first 20 lines, multiple directives allowed)
-  MOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#\s*mount:\s*' || true)
+  MOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*mount:[[:space:]]*' || true)
   if [ -n "$MOUNT_LINES" ]; then
-    MOUNT_KEYWORDS=$(echo "$MOUNT_LINES" | sed -E 's/^#\s*mount:\s*//' | tr '\n' ' ')
+    MOUNT_KEYWORDS=$(echo "$MOUNT_LINES" | sed -E 's/^#[[:space:]]*mount:[[:space:]]*//' | tr '\n' ' ')
   fi
 
   # Parse #copy.home: directives (first 20 lines, multiple directives allowed)
-  COPY_HOME_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#\s*copy\.home:\s*' || true)
+  COPY_HOME_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*copy\.home:[[:space:]]*' || true)
   if [ -n "$COPY_HOME_LINES" ]; then
-    COPY_HOME_FILES=$(echo "$COPY_HOME_LINES" | sed -E 's/^#\s*copy\.home:\s*//' | tr '\n' ' ')
+    COPY_HOME_FILES=$(echo "$COPY_HOME_LINES" | sed -E 's/^#[[:space:]]*copy\.home:[[:space:]]*//' | tr '\n' ' ')
   fi
 
   # Parse #usermount: directives (first 20 lines, multiple directives allowed)
-  USERMOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#\s*usermount:\s*' || true)
+  USERMOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*usermount:[[:space:]]*' || true)
   if [ -n "$USERMOUNT_LINES" ]; then
-    USERMOUNT_PATHS=$(echo "$USERMOUNT_LINES" | sed -E 's/^#\s*usermount:\s*//' | tr '\n' ' ')
+    USERMOUNT_PATHS=$(echo "$USERMOUNT_LINES" | sed -E 's/^#[[:space:]]*usermount:[[:space:]]*//' | tr '\n' ' ')
   fi
 fi
 
@@ -472,9 +472,9 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
   BUILD_ARGS=""
 
   if [ -f "$dir/Dockerfile" ]; then
-    PLATFORM_LINE=$(head -n 10 "$dir/Dockerfile" | grep -E '^#\s*platform:\s*' | head -n 1)
+    PLATFORM_LINE=$(head -n 10 "$dir/Dockerfile" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
     if [ -n "$PLATFORM_LINE" ]; then
-      BUILD_PLATFORM=$(echo "$PLATFORM_LINE" | sed -E 's/^#\s*platform:\s*([^\s]+).*/\1/')
+      BUILD_PLATFORM=$(echo "$PLATFORM_LINE" | sed -E 's/^#[[:space:]]*platform:[[:space:]]*([^[:space:]]+).*/\1/')
       >&2 echo "Found platform tag in Dockerfile: ${BUILD_PLATFORM}"
     fi
 
@@ -485,11 +485,11 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
     fi
 
     # Parse http.static directives and start HTTP servers
-    HTTP_STATIC_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#\s*http\.static:\s*' || true)
+    HTTP_STATIC_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*http\.static:[[:space:]]*' || true)
     if [ -n "$HTTP_STATIC_LINES" ]; then
       while IFS= read -r http_line; do
         # Parse: #http.static: KEY=/path/to/dir
-        HTTP_SPEC=$(echo "$http_line" | sed -E 's/^#\s*http\.static:\s*//')
+        HTTP_SPEC=$(echo "$http_line" | sed -E 's/^#[[:space:]]*http\.static:[[:space:]]*//')
         HTTP_KEY=$(echo "$HTTP_SPEC" | cut -d= -f1)
         HTTP_PATH=$(echo "$HTTP_SPEC" | cut -d= -f2-)
 
@@ -547,12 +547,26 @@ PYEOF
           exit 1
         fi
 
-        # On Linux, use the Docker bridge gateway IP instead of host.docker.internal
-        HOST_IP=$(ip route | awk '/docker0/ {print $9}' | head -n1)
-        if [ -z "$HOST_IP" ]; then
-          # Fallback to getting the default route IP
-          HOST_IP=$(ip route get 1 | awk '{print $7;exit}')
-        fi
+        # Determine an IP address that the container can use to reach this
+        # HTTP server on the host. The strategy is OS-specific because Linux
+        # and macOS expose host networking to containers differently.
+        case "$(uname -s)" in
+          Darwin)
+            # Docker Desktop on macOS injects host.docker.internal into the
+            # container's resolver, pointing at the host. The `ip` command is
+            # not available on macOS, so the Linux probes below would fail.
+            HOST_IP="host.docker.internal"
+            ;;
+          *)
+            # On Linux, use the Docker bridge gateway IP instead of
+            # host.docker.internal (the latter is not injected by default).
+            HOST_IP=$(ip route | awk '/docker0/ {print $9}' | head -n1)
+            if [ -z "$HOST_IP" ]; then
+              # Fallback to getting the default route IP
+              HOST_IP=$(ip route get 1 | awk '{print $7;exit}')
+            fi
+            ;;
+        esac
         SERVER_URL="http://${HOST_IP}:${SERVER_PORT}"
         BUILD_ARGS="$BUILD_ARGS --build-arg HTTP_${HTTP_KEY}=${SERVER_URL}"
 
@@ -579,7 +593,14 @@ EOF
     # Build docker image with collected options
     BUILD_CMD="docker build -t $tag --progress=plain"
     if [ -n "$BUILD_PLATFORM" ]; then
-      BUILD_CMD="$BUILD_CMD --platform=${BUILD_PLATFORM}"
+      # Normalize to OS/arch form - see comment near PLATFORM_ARG below.
+      # `# platform: arm64` is accepted with the legacy image store but
+      # fails as `--platform=arm64` against containerd-backed stores
+      # (Docker Desktop), which need `linux/arm64`.
+      case "$BUILD_PLATFORM" in
+        */*) BUILD_CMD="$BUILD_CMD --platform=${BUILD_PLATFORM}" ;;
+        *)   BUILD_CMD="$BUILD_CMD --platform=linux/${BUILD_PLATFORM}" ;;
+      esac
     fi
     if [ -n "$BUILD_ARGS" ]; then
       BUILD_CMD="$BUILD_CMD $BUILD_ARGS"
@@ -617,10 +638,18 @@ if [ -t 0 ]; then
   TFLAG="-t"
 fi
 
-# Set platform argument only if IMGARCH is not empty
+# Set platform argument only if IMGARCH is not empty.
+# `docker inspect ... {{.Architecture}}` returns a bare arch (e.g. "arm64").
+# That works with the legacy image store, but containerd-backed stores (used
+# by Docker Desktop) match images by full "os/arch" - a bare "arm64" misses
+# the manifest's "linux/arm64" entry and `docker run` then tries to pull
+# from a registry. Normalize to "linux/<arch>" when no slash is present.
 PLATFORM_ARG=""
 if [ -n "$IMGARCH" ]; then
-  PLATFORM_ARG="--platform ${IMGARCH}"
+  case "$IMGARCH" in
+    */*) PLATFORM_ARG="--platform ${IMGARCH}" ;;
+    *)   PLATFORM_ARG="--platform linux/${IMGARCH}" ;;
+  esac
 fi
 
 # Handle #copy.home: files - create tar archive
@@ -668,9 +697,9 @@ fi
 DOCKER_OPTIONS=""
 OPTION_ENV_VARS=""
 if [ -f "$dir/Dockerfile" ]; then
-  OPTION_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#\s*option:\s*' || true)
+  OPTION_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*option:[[:space:]]*' || true)
   if [ -n "$OPTION_LINES" ]; then
-    DOCKER_OPTIONS=$(echo "$OPTION_LINES" | sed -E 's/^#\s*option:\s*//' | tr '\n' ' ')
+    DOCKER_OPTIONS=$(echo "$OPTION_LINES" | sed -E 's/^#[[:space:]]*option:[[:space:]]*//' | tr '\n' ' ')
     # Extract env var names from -e options in DOCKER_OPTIONS
     OPTION_ENV_VARS=$(echo "$DOCKER_OPTIONS" | grep -oE '(-e|--env=?)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' | sed -E 's/(-e|--env=?)[[:space:]]*//' | sed 's/=$//' | tr '\n' ',' | sed 's/,$//')
   fi
@@ -680,9 +709,9 @@ fi
 SUDO_MODE=""
 SUDO_MODE_ARG=""
 if [ -f "$dir/Dockerfile" ]; then
-  SUDO_LINE=$(head -n 20 "$dir/Dockerfile" | grep -E '^#\s*sudo:\s*' | tail -1 || true)
+  SUDO_LINE=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*sudo:[[:space:]]*' | tail -1 || true)
   if [ -n "$SUDO_LINE" ]; then
-    SUDO_MODE=$(echo "$SUDO_LINE" | sed -E 's/^#\s*sudo:\s*//' | tr -d ' ')
+    SUDO_MODE=$(echo "$SUDO_LINE" | sed -E 's/^#[[:space:]]*sudo:[[:space:]]*//' | tr -d ' ')
   fi
 fi
 if [ "$SUDO_MODE" = "all" ]; then
@@ -699,8 +728,8 @@ if [ -f "$dir/Dockerfile" ]; then
   if [ -n "$LAST_FROM" ]; then
     # Extract ENV var names (handles both "ENV FOO=bar" and "ENV FOO bar" syntax)
     ENV_VARS=$(tail -n +$LAST_FROM "$dir/Dockerfile" | \
-      grep -E '^\s*ENV\s+' | \
-      sed -E 's/^\s*ENV\s+//' | \
+      grep -E '^[[:space:]]*ENV[[:space:]]+' | \
+      sed -E 's/^[[:space:]]*ENV[[:space:]]+//' | \
       sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)[= ].*/\1/' | \
       tr '\n' ',' | sed 's/,$//')
   fi
