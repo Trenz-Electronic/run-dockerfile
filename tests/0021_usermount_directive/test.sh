@@ -5,6 +5,7 @@
 # - Existing directories are mounted without error
 # - Multiple directories can be mounted
 # - Environment variables are expanded ($HOME, $PWD)
+# - Command substitution in a directive is NOT evaluated on the host
 
 set -e
 
@@ -17,8 +18,9 @@ TESTDIR2="$HOME/.docker-booster-test-0021-multi-$$"
 # Cleanup function
 cleanup() {
     rm -rf "$TESTDIR1" "$TESTDIR2"
-    rm -rf test_create test_existing test_multiple test_envvar
-    docker rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi 2>/dev/null || true
+    rm -rf test_create test_existing test_multiple test_envvar test_injection
+    rm -f "$HOME"/.docker-booster-pwned-0021-*
+    docker rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi test_injection 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -154,6 +156,34 @@ fi
 
 # Cleanup the envtest dir
 rm -rf "$HOME/.docker-booster-envtest-0021"
+cd ..
+
+echo ""
+echo "=== Test 5: Command substitution must NOT execute on host ==="
+rm -rf "$TESTDIR1"
+MARKER="$HOME/.docker-booster-pwned-0021-$$"
+rm -f "$MARKER"
+mkdir -p test_injection
+cd test_injection
+# If the path were expanded with eval, this would run touch on the HOST.
+# ${IFS} keeps it one shell word so it survives the parser's word-splitting.
+cat > Dockerfile <<EOF
+#usermount: \$(touch\${IFS}$MARKER)
+FROM ubuntu:22.04
+EOF
+ln -sf ../../../build-and-run run
+
+# The run itself may fail (the literal path is not a valid mount); that is fine.
+# The only thing under test is that no host-side code executed.
+./run true >/dev/null 2>&1 || true
+
+if [ -e "$MARKER" ]; then
+    echo "FAIL: command substitution executed on host (marker file created)"
+    rm -f "$MARKER"
+    fail=1
+else
+    echo "PASS: command substitution not executed (treated as literal data)"
+fi
 cd ..
 
 if [ "$fail" = 0 ]; then

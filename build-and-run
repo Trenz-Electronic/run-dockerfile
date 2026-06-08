@@ -70,6 +70,46 @@ info() {
   fi
 }
 
+# Literal find/replace, no regex/glob/eval. Args: needle replacement subject.
+# Every byte is treated literally, so replacement values containing shell or
+# regex metacharacters are safe. Prints the result with no trailing newline.
+str_replace() {
+  _sr_needle=$1
+  _sr_repl=$2
+  _sr_rest=$3
+  _sr_out=""
+  while case $_sr_rest in *"$_sr_needle"*) true ;; *) false ;; esac; do
+    _sr_out=$_sr_out${_sr_rest%%"$_sr_needle"*}$_sr_repl
+    _sr_rest=${_sr_rest#*"$_sr_needle"}
+  done
+  printf '%s' "$_sr_out$_sr_rest"
+}
+
+# Expand environment-variable references in a #usermount: path, treating the
+# directive value as data rather than host-side shell code. Only well-formed
+# variable references ($NAME and ${NAME}) are substituted, using their value
+# from the environment via printenv; command substitution ($(...) / backticks),
+# arithmetic, positional parameters, and any other shell syntax are left
+# literal because they cannot match the variable-name pattern. This is the
+# safe replacement for the historical `eval echo "$path"`.
+expand_usermount_path() {
+  _eu_p=$1
+  # Distinct references, longest first, so e.g. $HOMEPAGE is resolved before
+  # $HOME and a shared prefix never corrupts the longer name.
+  _eu_tokens=$(printf '%s\n' "$_eu_p" \
+    | grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*' \
+    | awk '!seen[$0]++ { print length, $0 }' | sort -rn | cut -d' ' -f2-)
+  for _eu_tok in $_eu_tokens; do
+    # Strip the leading $ and optional braces to get the bare variable name.
+    _eu_name=${_eu_tok#'$'}
+    _eu_name=${_eu_name#'{'}
+    _eu_name=${_eu_name%'}'}
+    _eu_val=$(printenv "$_eu_name" 2>/dev/null || true)
+    _eu_p=$(str_replace "$_eu_tok" "$_eu_val" "$_eu_p")
+  done
+  printf '%s' "$_eu_p"
+}
+
 myname=$(basename $0)
 
 # Are we the user command to be executed?
@@ -680,8 +720,8 @@ fi
 USERMOUNT_VARGS=""
 if [ -n "$USERMOUNT_PATHS" ]; then
   for path in $USERMOUNT_PATHS; do
-    # Expand environment variables in path
-    expanded_path=$(eval echo "$path")
+    # Expand environment-variable references in path safely (no shell eval)
+    expanded_path=$(expand_usermount_path "$path")
     if [ ! -d "$expanded_path" ]; then
       mkdir -p "$expanded_path"
       >&2 echo "Created directory: $expanded_path"
