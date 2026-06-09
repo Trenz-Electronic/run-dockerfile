@@ -261,6 +261,19 @@ my-project/
 
 As long as symlinks in your docker containers point to your docker-booster/build-and-run script, it works.
 
+## Requirements
+
+**On the host:**
+
+- Linux with Docker and bash. macOS works with GNU coreutils and GNU tar installed (the script uses GNU `realpath` and `sha256sum`; GNU `tar` makes rebuild detection catch renames and permission changes).
+- `python3` — only when using `#http.static:`.
+
+**In the image:**
+
+- `/bin/sh`, `su`, and writable `/etc/passwd` and `/etc/group` — users and groups are created by appending entries directly, so no `useradd` is needed. Standard Debian, Ubuntu, Fedora and Alpine base images all qualify; scratch and distroless images do not.
+- `tar` with gzip support — only when using `#copy.home:` (the files are delivered as a tarball extracted inside the container).
+- `sudo` and `/etc/sudoers.d/` — only when using `#sudo: all`.
+
 ## Technical Details
 
 - Creates a temporary user inside the container matching your host UID/GID/group
@@ -294,7 +307,9 @@ FROM ubuntu:22.04
 FROM ubuntu:22.04
 ```
 
-The default behavior makes docker-booster safe for CI/CD pipelines and untrusted containers without any configuration.
+The default behavior makes docker-booster safe for CI/CD pipelines without any configuration: nothing outside the project directory is exposed to the container.
+
+**Trust model:** docker-booster is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#option:` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#usermount:` creates directories on the host, and `#copy.home:` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
 
 ## Testing
 
