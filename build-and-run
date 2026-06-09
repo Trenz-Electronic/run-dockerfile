@@ -133,14 +133,34 @@ if [ x"${myname}" = x"user-command" ]; then
   HOME=$1
   shift || exit $?
 
-  # Add ourselves to the system.
-  if ! grep -q ^$USER: /etc/passwd; then
+  # Add ourselves to the system. The user we will actually su to is RUN_USER.
+  #
+  # Reuse the image's existing user ONLY if it already matches the host identity
+  # exactly - same name, uid AND primary gid. If the image happens to ship a user
+  # with the same name but a different uid/gid, that name is a different identity,
+  # so we must NOT reuse it (su'ing to it would run under the image's uid and break
+  # access to bind-mounted host files). In that case run as a distinct, deterministic
+  # user "${USER}_${USERID}" that carries the host uid/gid - mirroring how a group
+  # name clash is handled below.
+  RUN_USER=$USER
+  EXISTING_PASSWD=$(grep "^$USER:" /etc/passwd | head -n1)
+  if [ -n "$EXISTING_PASSWD" ]; then
+    EXISTING_UID=$(echo "$EXISTING_PASSWD" | cut -d: -f3)
+    EXISTING_GID=$(echo "$EXISTING_PASSWD" | cut -d: -f4)
+    if [ "$EXISTING_UID" != "$USERID" ] || [ "$EXISTING_GID" != "$GROUPID" ]; then
+      RUN_USER="${USER}_${USERID}"
+      if ! grep -q "^$RUN_USER:" /etc/passwd; then
+        echo "$RUN_USER:*:$USERID:$GROUPID:Docker runner:$HOME:/bin/bash" >> /etc/passwd
+      fi
+    fi
+    # else: existing user already matches host uid+gid, reuse it as-is
+  else
     echo "$USER:*:$USERID:$GROUPID:Docker runner:$HOME:/bin/bash" >> /etc/passwd
   fi
 
   # Create sudoers entry only if #sudo: all directive was specified
   if [ "$DOCKER_SUDO_MODE" = "all" ]; then
-    echo "$USER ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/10-docker-users
+    echo "$RUN_USER ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/10-docker-users
   fi
 
   # Create group with host group name, handling conflicts
@@ -214,7 +234,7 @@ if [ x"${myname}" = x"user-command" ]; then
   fi
   # Single-quote the -c body so the *inner* shell expands "$@" (= the VAR=value
   # pairs followed by the user command). env reads leading name=value as assignments.
-  exec su -s /bin/sh "$USER" -c 'exec env "$@"' -- sh "$@"
+  exec su -s /bin/sh "$RUN_USER" -c 'exec env "$@"' -- sh "$@"
   >&2 echo "Exec failed somehow. Error code: $?"
   exit 3
 fi

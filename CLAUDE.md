@@ -64,7 +64,7 @@ The script operates in two modes based on `$0`:
   Preserved env vars are carried across the `su` privilege drop as positional parameters
   (`set -- "$var=$val" "$@"`), so values containing spaces survive intact.
 
-User/group mapping preserves host username, UID, GID, and group name. If the group name already exists in the container with a different GID, it's renamed to `${groupname}_${gid}`.
+User/group mapping preserves host username, UID, GID, and group name. If the group name already exists in the container with a different GID, it's renamed to `${groupname}_${gid}`. The host user is mapped by **identity, not just name**: the image's existing user is reused only when it matches the host on name, UID *and* primary GID; if the image ships a user with the same name but a different UID/GID, the container instead runs as a distinct user `${username}_${uid}` carrying the host UID/GID (so bind-mounted files stay accessible). The `su` target and any `#sudo:` sudoers entry use this resolved user.
 
 The script automatically enables Docker BuildKit when Dockerfiles use `RUN --mount` syntax.
 
@@ -147,3 +147,4 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0023_glob_in_option` - Tests a glob character in an `#option:` value is passed literally, not expanded against the host filesystem
 - `0024_env_value_with_space` - Tests an env value with a space survives end-to-end through both shells (host array + container-side `set --` across `su`)
 - `0025_copy_home_chown_scope` - Tests `#copy.home:` ownership fix is scoped to copied entries (a root-owned decoy in `$HOME` keeps its ownership; no recursive `chown -R`)
+- `0026_user_mapping_uid_conflict` - Tests an image user with the host's username but a different UID is not reused; container runs with the host UID/GID
