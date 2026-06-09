@@ -71,14 +71,16 @@ The script automatically enables Docker BuildKit when Dockerfiles use `RUN --mou
 ### Smart Rebuild Detection
 
 The script implements hash-based rebuild detection:
-- Calculates SHA-256 hash of all files in the build context (excluding `.git/`, `*.swp`)
+- Calculates a SHA-256 hash of the build context (excluding `.git/`, `*.swp`) via `compute_context_hash()`
+- Preferred path uses a **deterministic GNU `tar` stream** (`--sort=name --mtime=... --owner=0 --group=0 --numeric-owner`) piped to `sha256sum`. Hashing the archive (not just concatenated content) folds each entry's **path, mode, and symlink target** into the fingerprint, so a rename or `chmod` that changes the built image triggers a rebuild; `mtime`/owner are normalized so unrelated metadata churn does not.
+- Falls back to the original content-only hash (`find … | xargs cat | sha256sum`) when GNU `tar` is unavailable (e.g. stock macOS). The fallback is weaker: it misses pure renames and mode changes.
 - Stores hash as Docker image label: `docker-booster.context-hash`
 - On subsequent runs, compares current hash with label from existing image
 - Skips rebuild if hashes match, dramatically speeding up development workflow
 - No external cache files needed - hash stored in Docker image metadata
 - Single optimized `docker inspect` call retrieves architecture, creation time, and hash label
 
-**Design note — the hash is deliberately "dumb":** It hashes the raw bytes of the whole build context, including the Dockerfile and the run-time-only directives in it (`#mount:`, `#copy.home:`, `#usermount:`, `#option:`, `#sudo:`). Editing one of those directives therefore triggers a rebuild even though it does not affect the built image. This is intentional and should not be "optimized" by filtering those lines out of the hash:
+**Design note — the hash is deliberately conservative:** It fingerprints the whole build context, including the Dockerfile and the run-time-only directives in it (`#mount:`, `#copy.home:`, `#usermount:`, `#option:`, `#sudo:`). Editing one of those directives therefore triggers a rebuild even though it does not affect the built image. It also does **not** parse `.dockerignore`, so a change to an ignored file can trigger a rebuild Docker itself would skip. Both are intentional over-hashing and should not be "optimized" away:
 - The spurious rebuild is nearly free. Docker strips comment lines during parsing, so they never participate in any layer's cache key; the forced `docker build` hits cache on every layer and finishes in ~1s. The only real waste is build-phase wrapper work (notably `#http.static:` server startup).
 - The failure modes are asymmetric. Over-hashing (a line that did not need to trigger a rebuild) costs a cheap rebuild; under-hashing (excluding a line that *does* affect the build) yields a stale image and silently wrong behavior. Hashing everything keeps the safe default and makes the hash obviously correct.
 - Filtering would couple the hash to the directive grammar, forcing every new directive to be re-classified as build-affecting or run-time. If spurious rebuilds ever become a real pain point, the cheaper fix is to skip the build-phase wrapper work on an all-cache-hit build, not to teach the integrity hash about directive semantics.
@@ -138,7 +140,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0014_cmdline_options` - Tests common docker options (-v, --network, --cpus)
 - `0015_user_mapping_conflict` - Tests group name conflict handling (rename with GID suffix)
 - `0016_buildkit_auto` - Tests automatic BuildKit enablement for `RUN --mount` syntax
-- `0017_auto_rebuild` - Tests hash-based automatic rebuild detection (skip rebuild when unchanged, detect Dockerfile and context changes)
+- `0017_auto_rebuild` - Tests hash-based automatic rebuild detection (skip rebuild when unchanged, detect Dockerfile and context changes, and — with GNU tar — file renames and mode changes)
 - `0018_mount_directives` - Tests `#mount:` directive (pwd, .git, home, FIRST-found semantics)
 - `0019_copy_home` - Tests `#copy.home:` directive (single file, multiple files, missing file error)
 - `0020_sudo_directive` - Tests `#sudo: all` directive (su-based privilege drop, optional sudoers configuration)

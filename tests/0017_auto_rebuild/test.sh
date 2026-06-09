@@ -5,6 +5,8 @@
 # - Subsequent runs skip rebuild when nothing changed
 # - Changes to Dockerfile trigger rebuild
 # - Changes to context files trigger rebuild
+# - Renaming a file triggers rebuild (filename is part of the hash; GNU tar)
+# - Changing a file's mode triggers rebuild (mode is part of the hash; GNU tar)
 
 set -e
 
@@ -141,6 +143,43 @@ case "$output" in
         fail=1
         ;;
 esac
+
+echo ""
+echo "=== Test 8: Renaming a context file triggers rebuild (filename in hash) ==="
+# These two cases exercise PATH/MODE sensitivity, which only the deterministic
+# (GNU tar) hash provides; on a content-only fallback host they are skipped.
+if tar --sort=name --version >/dev/null 2>&1; then
+    echo "rename-content" > rename_me.txt
+    ./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
+    mv rename_me.txt renamed.txt                         # same content, different name
+    output=$(./run echo "after rename" 2>&1)
+    if echo "$output" | grep -q "rebuilding\|changes detected"; then
+        echo "PASS: Rename triggered rebuild"
+    else
+        echo "FAIL: Rename did not trigger rebuild (filename ignored by hash)"
+        echo "Output: $output"
+        fail=1
+    fi
+    rm -f renamed.txt
+
+    echo ""
+    echo "=== Test 9: Changing a file's mode triggers rebuild (mode in hash) ==="
+    echo "#!/bin/sh" > mode_test.sh
+    chmod 644 mode_test.sh
+    ./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
+    chmod 755 mode_test.sh                               # mode change only, same content
+    output=$(./run echo "after chmod" 2>&1)
+    if echo "$output" | grep -q "rebuilding\|changes detected"; then
+        echo "PASS: chmod triggered rebuild"
+    else
+        echo "FAIL: chmod did not trigger rebuild (mode ignored by hash)"
+        echo "Output: $output"
+        fail=1
+    fi
+    rm -f mode_test.sh
+else
+    echo "SKIP: Tests 8-9 (rename/mode detection) require GNU tar"
+fi
 
 if [ "$fail" = 0 ]; then
     echo ""
