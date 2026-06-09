@@ -32,7 +32,7 @@ The script parses special comment directives from Dockerfiles:
 - `#mount:` accepts keywords: `.git` (git repo root), `pwd` (current directory), `home` (home directory)
 - FIRST-found semantics: checks keywords in order, uses first match
 - Multiple `#mount:` directives accumulate keywords
-- `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data.
+- `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data. After extraction, ownership is fixed **only** on the copied entries and the parent directories leading to them (driven by `tar tzf`, walking each member's ancestors) — never a recursive `chown -R` over `$HOME`, which could re-own a bind-mounted host home (`#mount: home`, or simply the project dir that usually lives under `$HOME`).
 - `#usermount:` takes **exactly one path per directive line** (the whole value after the colon, trimmed), so paths may contain spaces. Use multiple `#usermount:` lines for multiple paths — they accumulate. (Unlike `#mount:`/`#copy.home:`, the value is *not* whitespace-split into several entries.)
 - **Default behavior** (no `#mount:` directive): Try `.git` first, fall back to `pwd` (secure by default, no $HOME exposure)
 
@@ -146,3 +146,4 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0022_space_in_path` - Tests a host bind-mount path containing a space is passed to docker verbatim (bash-array quoting)
 - `0023_glob_in_option` - Tests a glob character in an `#option:` value is passed literally, not expanded against the host filesystem
 - `0024_env_value_with_space` - Tests an env value with a space survives end-to-end through both shells (host array + container-side `set --` across `su`)
+- `0025_copy_home_chown_scope` - Tests `#copy.home:` ownership fix is scoped to copied entries (a root-owned decoy in `$HOME` keeps its ownership; no recursive `chown -R`)

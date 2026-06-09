@@ -169,9 +169,23 @@ if [ x"${myname}" = x"user-command" ]; then
   if [ -f /tmp/home-files.tar.gz ]; then
     cd "$HOME"
     tar xzf /tmp/home-files.tar.gz 2>/dev/null || true
-    # Fix ownership of extracted files/dirs (tar as root preserves original UIDs
-    # but may create parent directories owned by root)
-    chown -R "$USERID:$GROUPID" . 2>/dev/null || true
+    # Fix ownership of ONLY the copied entries and the parent directories leading
+    # to them - never a recursive `chown -R .`. $HOME may be a bind mount of the
+    # host home (#mount: home) or merely contain one (the project dir usually lives
+    # under $HOME), so recursing would re-own unrelated host files. tar lists each
+    # copied file but NOT the intermediate dirs it creates, so for every member we
+    # also walk its ancestors up to (not including) $HOME, chowning each dir node
+    # itself - without descending into any sibling content.
+    tar tzf /tmp/home-files.tar.gz 2>/dev/null | while IFS= read -r _entry; do
+      [ -n "$_entry" ] || continue
+      _p=$_entry
+      while [ -n "$_p" ] && [ "$_p" != "." ] && [ "$_p" != "/" ]; do
+        chown -h "$USERID:$GROUPID" "$_p" 2>/dev/null || true
+        _parent=$(dirname "$_p")
+        [ "$_parent" = "$_p" ] && break
+        _p=$_parent
+      done
+    done
     cd - >/dev/null
   fi
 
