@@ -382,7 +382,7 @@ CMDLINE_ENV_VARS=$(echo "$CMDLINE_ENV_VARS" | sed 's/^,//')
 
 # Parse #mount:, #copy.home:, and #usermount: directives from Dockerfile
 MOUNT_KEYWORDS=""
-COPY_HOME_FILES=""
+COPY_HOME_FILES=()
 USERMOUNT_PATHS=()
 if [ -f "$dir/Dockerfile" ]; then
   # Parse #mount: directives (first 20 lines, multiple directives allowed)
@@ -391,11 +391,13 @@ if [ -f "$dir/Dockerfile" ]; then
     MOUNT_KEYWORDS=$(echo "$MOUNT_LINES" | sed -E 's/^#[[:space:]]*mount:[[:space:]]*//' | tr '\n' ' ')
   fi
 
-  # Parse #copy.home: directives (first 20 lines, multiple directives allowed)
-  COPY_HOME_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*copy\.home:[[:space:]]*' || true)
-  if [ -n "$COPY_HOME_LINES" ]; then
-    COPY_HOME_FILES=$(echo "$COPY_HOME_LINES" | sed -E 's/^#[[:space:]]*copy\.home:[[:space:]]*//' | tr '\n' ' ')
-  fi
+  # Parse #copy.home: directives (first 20 lines, multiple directives allowed).
+  # Each line is exactly ONE path (the whole value after the colon, trimmed), so
+  # filenames may contain spaces; use multiple #copy.home: lines for multiple files.
+  while IFS= read -r _ch_line; do
+    _ch_file=$(printf '%s' "$_ch_line" | sed -E 's/^#[[:space:]]*copy\.home:[[:space:]]*//; s/[[:space:]]+$//')
+    [ -n "$_ch_file" ] && COPY_HOME_FILES+=("$_ch_file")
+  done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*copy\.home:[[:space:]]*' || true)
 
   # Parse #usermount: directives (first 20 lines, multiple directives allowed).
   # Each line specifies exactly ONE path (the whole value after the colon,
@@ -719,18 +721,19 @@ fi
 # Handle #copy.home: files - create tar archive
 COPY_HOME_VARG=()
 COPY_HOME_TAR=""
-if [ -n "$COPY_HOME_FILES" ]; then
+if [ ${#COPY_HOME_FILES[@]} -gt 0 ]; then
   COPY_HOME_TAR="/tmp/docker-booster-home-files-$$.tar.gz"
   cd "$HOME"
 
-  # Try to create tar, check for missing files
-  if tar czf "$COPY_HOME_TAR" $COPY_HOME_FILES 2>/dev/null; then
+  # Try to create tar, check for missing files. The file list is a quoted array,
+  # so filenames containing spaces are passed to tar as single arguments.
+  if tar czf "$COPY_HOME_TAR" "${COPY_HOME_FILES[@]}" 2>/dev/null; then
     COPY_HOME_VARG=(-v "$COPY_HOME_TAR:/tmp/home-files.tar.gz:ro")
-    info "Collected home files for container: $COPY_HOME_FILES"
+    info "Collected home files for container: ${COPY_HOME_FILES[*]}"
   else
     # Tar failed, list missing files
     >&2 echo "ERROR: Failed to collect files from \$HOME. Missing files:"
-    for f in $COPY_HOME_FILES; do
+    for f in "${COPY_HOME_FILES[@]}"; do
       if [ ! -e "$HOME/$f" ]; then
         >&2 echo "  $HOME/$f"
       fi

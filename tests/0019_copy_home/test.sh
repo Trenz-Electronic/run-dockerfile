@@ -5,6 +5,7 @@
 # - Multiple files copying works
 # - Missing files cause error
 # - Files are extracted to correct location
+# - A filename containing a space is handled (one path per #copy.home: line)
 
 set -e
 
@@ -102,11 +103,37 @@ else
 fi
 cd ..
 
+echo ""
+echo "=== Test 4: Filename containing a space ==="
+echo "spaced license $$" > "$HOME/.has space-0019.dat"
+mkdir -p test_space
+cd test_space
+# One path per #copy.home: line, so the whole value (space and all) is one file.
+cat > Dockerfile <<'EOF'
+#copy.home: .has space-0019.dat
+FROM ubuntu:22.04
+EOF
+ln -sf ../../../build-and-run run
+# `|| true` so a regression (./run aborting with "Failed to collect files")
+# reports FAIL cleanly instead of tripping set -e and skipping cleanup.
+output=$(./run cat "$HOME/.has space-0019.dat" 2>&1) || true
+case "$output" in
+    *"spaced license $$"*)
+        echo "PASS: File with a space in its name copied successfully"
+        ;;
+    *)
+        echo "FAIL: Spaced file not collected/extracted (was it split on the space?)"
+        echo "Output: $output"
+        fail=1
+        ;;
+esac
+cd ..
+
 # Cleanup
-rm -f "$HOME/.test-license-0019.dat"
+rm -f "$HOME/.test-license-0019.dat" "$HOME/.has space-0019.dat"
 rm -rf "$HOME/.config/test-tool-0019"
-rm -rf test_single test_multiple test_missing
-docker rmi -f 0019_copy_single 0019_copy_multiple 2>/dev/null || true
+rm -rf test_single test_multiple test_missing test_space
+docker rmi -f 0019_copy_single 0019_copy_multiple test_space 2>/dev/null || true
 
 if [ "$fail" = 0 ]; then
     echo ""
