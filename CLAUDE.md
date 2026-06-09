@@ -66,7 +66,7 @@ The script operates in two modes based on `$0`:
 
 User/group mapping preserves host username, UID, GID, and group name. If the group name already exists in the container with a different GID, it's renamed to `${groupname}_${gid}`. The host user is mapped by **identity, not just name**: the image's existing user is reused only when it matches the host on name, UID *and* primary GID; if the image ships a user with the same name but a different UID/GID, the container instead runs as a distinct user `${username}_${uid}` carrying the host UID/GID (so bind-mounted files stay accessible). The `su` target and any `#sudo:` sudoers entry use this resolved user.
 
-The script automatically enables Docker BuildKit when Dockerfiles use `RUN --mount` syntax.
+The script enables Docker BuildKit by default (`export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"` before `docker build`) — the modern build path (the engine default since Docker 23.0) and a prerequisite for `RUN --mount`, cache mounts, and build secrets. Set `DOCKER_BUILDKIT=0` to force the legacy builder.
 
 ### Smart Rebuild Detection
 
@@ -139,7 +139,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0013_pragma_option_env` - Tests `#option: -e` passes env vars
 - `0014_cmdline_options` - Tests common docker options (-v, --network, --cpus)
 - `0015_user_mapping_conflict` - Tests group name conflict handling (rename with GID suffix)
-- `0016_buildkit_auto` - Tests automatic BuildKit enablement for `RUN --mount` syntax
+- `0016_buildkit_auto` - Tests BuildKit is enabled by default (a `RUN --mount` Dockerfile builds without any opt-in)
 - `0017_auto_rebuild` - Tests hash-based automatic rebuild detection (skip rebuild when unchanged, detect Dockerfile and context changes, and — with GNU tar — file renames and mode changes)
 - `0018_mount_directives` - Tests `#mount:` directive (pwd, .git, home, FIRST-found semantics)
 - `0019_copy_home` - Tests `#copy.home:` directive (single file, multiple files, missing file error)

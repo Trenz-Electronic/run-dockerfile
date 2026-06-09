@@ -268,7 +268,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 - Optionally configures sudoers with `#sudo: all` directive
 - Preserves your working directory inside the container
 - Auto-detects TTY for interactive sessions
-- Automatically enables Docker BuildKit when Dockerfiles use `RUN --mount` syntax
+- Enables Docker BuildKit by default (set `DOCKER_BUILDKIT=0` to opt out); `RUN --mount`, cache mounts, and build secrets work out of the box
 - Automatically rebuilds the image when detecting changes to Dockerfile and build context using the hash stored as a label in the Docker image
 
 ## Security Considerations

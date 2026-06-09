@@ -1,26 +1,24 @@
 #!/bin/sh
-# Test: BuildKit auto-detection - RUN --mount triggers DOCKER_BUILDKIT=1
+# Test: BuildKit is enabled by default.
+# The Dockerfile uses `RUN --mount=type=tmpfs,...`, which only the BuildKit
+# builder understands, so a successful build proves BuildKit is active without
+# the user having to set anything.
 
 set -e
 
-# Force rebuild to see the message
+# Force a rebuild so the build actually runs.
 docker rmi -f 0016_buildkit_auto 2>/dev/null || true
 
-# Run a simple command and check that image builds successfully
-# If BuildKit wasn't enabled, the build would fail
 output=$(./run echo "buildkit test" 2>&1)
 
 case "$output" in
-    *"BuildKit mount syntax"*"buildkit test"*)
-        echo "PASS: BuildKit auto-detected and enabled"
-        exit 0
-        ;;
     *"buildkit test"*)
-        echo "PASS: BuildKit test (message not in stderr, but build succeeded)"
+        echo "PASS: BuildKit enabled by default (RUN --mount build succeeded)"
         exit 0
         ;;
     *)
-        echo "FAIL: Unexpected output: $output"
+        echo "FAIL: RUN --mount build did not succeed with BuildKit default on"
+        echo "Output: $output"
         exit 1
         ;;
 esac

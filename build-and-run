@@ -588,11 +588,12 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
       >&2 echo "Found platform tag in Dockerfile: ${BUILD_PLATFORM}"
     fi
 
-    # Check if Dockerfile uses RUN --mount syntax (requires BuildKit)
-    if grep -q '^RUN --mount' "$dir/Dockerfile"; then
-      >&2 echo "Dockerfile uses BuildKit mount syntax, enabling DOCKER_BUILDKIT=1"
-      export DOCKER_BUILDKIT=1
-    fi
+    # Enable BuildKit by default - it is the modern Docker build path (the engine
+    # default since Docker 23.0) and is required for `RUN --mount`, cache mounts,
+    # and build secrets. Respect an explicit override so `DOCKER_BUILDKIT=0` still
+    # forces the legacy builder.
+    export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
+    info "Using BuildKit (DOCKER_BUILDKIT=$DOCKER_BUILDKIT)"
 
     # Parse http.static directives and start HTTP servers
     HTTP_STATIC_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*http\.static:[[:space:]]*' || true)
