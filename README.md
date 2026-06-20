@@ -46,7 +46,7 @@ Follow these steps
    ```bash
    (cd containers/my-container && ln -s ../../docker-booster/build-and-run run)
    ```
-   This is the crucial step. docker-booster follows this link back to your Docker context directory.
+   This is the crucial step. The `run` symlink must live next to the Dockerfile; docker-booster uses that directory as the Docker context.
 
 4. **Run commands** inside the container without long Docker command lines:
    <!-- readme-sample: quickstart-04-run-commands -->

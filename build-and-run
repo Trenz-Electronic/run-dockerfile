@@ -684,7 +684,7 @@ compute_context_hash() {
         -cf - -C "$_cch_dir" . 2>/dev/null | host_sha256
   else
     find "$_cch_dir" -type f ! -path '*/.git/*' ! -name '*.swp' 2>/dev/null \
-      | sort | xargs cat 2>/dev/null | host_sha256
+      | sort | while IFS= read -r _cch_file; do cat "$_cch_file"; done 2>/dev/null | host_sha256
   fi
 }
 
@@ -1095,10 +1095,7 @@ cleanup_copy_home() {
 }
 trap cleanup_copy_home EXIT INT TERM
 
-# All accumulated docker arguments are bash arrays expanded as "${arr[@]}", and
-# every path/value is quoted, so spaces and glob characters are passed verbatim.
-# "$@" (not $*) preserves the user command's argument boundaries.
-exec docker run --rm -i "${TFLAG[@]}" \
+DOCKER_RUN_CMD=(docker run --rm -i "${TFLAG[@]}" \
   -v "${real_self}:/bin/user-command:ro" \
   -v "$MDIR:$MDIR" \
   "${COPY_HOME_VARG[@]}" \
@@ -1112,4 +1109,21 @@ exec docker run --rm -i "${TFLAG[@]}" \
   "${CMDLINE_DOCKER_ARGS[@]}" \
   "${DOCKER_OPTIONS[@]}" \
   "$tag" \
-  /bin/user-command "$USER" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@"
+  /bin/user-command "$USER" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@")
+
+# All accumulated docker arguments are bash arrays expanded as "${arr[@]}", and
+# every path/value is quoted, so spaces and glob characters are passed verbatim.
+# "$@" (not $*) preserves the user command's argument boundaries. When a
+# #copy.home: tarball exists, do not exec: the shell must survive long enough to
+# remove the host-side temp archive after docker exits.
+if [ -n "$COPY_HOME_TAR" ]; then
+  set +e
+  "${DOCKER_RUN_CMD[@]}"
+  DOCKER_RUN_RESULT=$?
+  set -e
+  cleanup_copy_home
+  trap - EXIT INT TERM
+  exit "$DOCKER_RUN_RESULT"
+fi
+
+exec "${DOCKER_RUN_CMD[@]}"

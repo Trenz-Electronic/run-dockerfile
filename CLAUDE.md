@@ -82,7 +82,7 @@ The script enables Docker BuildKit by default (`export DOCKER_BUILDKIT="${DOCKER
 The script implements hash-based rebuild detection:
 - Calculates a SHA-256 hash of the build context (excluding `.git/`, `*.swp`) via `compute_context_hash()`
 - Preferred path uses a **deterministic GNU `tar` stream** (`--sort=name --mtime=... --owner=0 --group=0 --numeric-owner`) piped to the host SHA-256 helper. Hashing the archive (not just concatenated content) folds each entry's **path, mode, and symlink target** into the fingerprint, so a rename or `chmod` that changes the built image triggers a rebuild; `mtime`/owner are normalized so unrelated metadata churn does not.
-- Falls back to the original content-only hash (`find … | xargs cat | host SHA-256 helper`) when GNU `tar` is unavailable (e.g. stock macOS). The fallback is weaker: it misses pure renames and mode changes.
+- Falls back to a content-only hash (`find … | sort | while read; cat "$file" | host SHA-256 helper`) when GNU `tar` is unavailable (e.g. stock macOS). The fallback is weaker: it misses pure renames and mode changes.
 - Stores hash as Docker image label: `docker-booster.context-hash`
 - On subsequent runs, compares current hash with label from existing image
 - Named-context contents referenced by `#context:` are not included in this hash. The directive line itself remains in the Dockerfile/main-context hash, so changing `#context:` values triggers rebuilds, but changing only files inside a named context requires `docker rmi <image-name>` or another forced rebuild.

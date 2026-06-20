@@ -22,6 +22,7 @@ echo "test config" > "$HOME/.config/test-tool-0019/config.json"
 # Clean up any existing images
 docker rmi -f 0019_copy_single 2>/dev/null || true
 docker rmi -f 0019_copy_multiple 2>/dev/null || true
+rm -f /tmp/docker-booster-home-files-*.tar.gz 2>/dev/null || true
 
 echo "=== Test 1: Copy single file from home ==="
 mkdir -p test_single
@@ -48,6 +49,13 @@ if echo "$output" | grep -q "Collected home files for container"; then
 else
     echo "FAIL: Expected 'Collected home files' message"
     fail=1
+fi
+if ls /tmp/docker-booster-home-files-*.tar.gz >/dev/null 2>&1; then
+    echo "FAIL: #copy.home: temp archive was left in /tmp"
+    ls /tmp/docker-booster-home-files-*.tar.gz 2>/dev/null || true
+    fail=1
+else
+    echo "PASS: #copy.home: temp archive cleaned up"
 fi
 cd ..
 

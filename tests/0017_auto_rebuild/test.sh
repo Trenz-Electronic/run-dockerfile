@@ -181,6 +181,40 @@ else
     echo "SKIP: Tests 8-9 (rename/mode detection) require GNU tar"
 fi
 
+echo ""
+echo "=== Test 10: Fallback hash handles filenames with spaces ==="
+fakebin="$(pwd)/fake-tar-bin-0017"
+mkdir -p "$fakebin"
+cat > "$fakebin/gtar" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+cat > "$fakebin/tar" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$fakebin/gtar" "$fakebin/tar"
+
+echo "fallback original" > "fallback space.txt"
+PATH="$fakebin:$PATH" ./run echo "fallback baseline" >/dev/null 2>&1 || {
+    echo "FAIL: Fallback-hash baseline run failed"
+    fail=1
+}
+echo "fallback changed" > "fallback space.txt"
+output=$(PATH="$fakebin:$PATH" ./run echo "after fallback space change" 2>&1) || {
+    echo "FAIL: Fallback-hash changed run failed"
+    echo "Output: $output"
+    fail=1
+}
+if echo "$output" | grep -q "rebuilding\|changes detected"; then
+    echo "PASS: Fallback hash detected change to spaced filename"
+else
+    echo "FAIL: Fallback hash missed change to spaced filename"
+    echo "Output: $output"
+    fail=1
+fi
+rm -rf "$fakebin" "fallback space.txt"
+
 if [ "$fail" = 0 ]; then
     echo ""
     echo "PASS: All automatic rebuild detection tests passed"
