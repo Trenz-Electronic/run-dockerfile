@@ -79,7 +79,7 @@ run_tests() {
         name=$(basename "$dir")
         printf "Running %s... " "$name"
 
-        if (cd "$dir" && sh test.sh) > /tmp/test-output-$$ 2>&1; then
+        if (cd "$dir" && sh test.sh) </dev/null > /tmp/test-output-$$ 2>&1; then
             echo "PASS"
             passed=$((passed + 1))
         else

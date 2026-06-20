@@ -195,6 +195,27 @@ The script automatically:
 
 **Caveat:** Changes to files in directories served by `#http.static:` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild.
 
+### BuildKit Named Contexts
+
+Pass Docker BuildKit named contexts with `#context:`:
+
+```dockerfile
+#context: installer=../installers
+FROM ubuntu:22.04
+
+COPY --from=installer large-sdk-installer.run /tmp/large-sdk-installer.run
+RUN sh /tmp/large-sdk-installer.run && rm /tmp/large-sdk-installer.run
+```
+
+Multiple directives are allowed. The context name must match `[a-z_][a-z0-9_.-]*`; context names are lowercase because Docker/BuildKit resolves `COPY --from=<name>` through image-reference-style rules on current Docker versions, and uppercase names can fail before the build with an invalid reference error. The value is passed to `docker build --build-context name=value` without shell evaluation. Local relative paths are resolved from the Dockerfile's directory and must exist before build. Remote, Git, image, and `target:` context values are passed through unchanged, for example:
+
+```dockerfile
+#context: base=docker-image://alpine:latest
+#context: src=https://github.com/org/repo.git
+```
+
+**Caveat:** Changes to files inside named contexts do not trigger automatic rebuilds. Changing the `#context:` line itself does trigger a rebuild. Use `docker rmi <image-name>` to force a rebuild after changing only named-context contents.
+
 ### Sudo Configuration
 
 If you need `sudo` access inside the container, use the `#sudo:` directive and make sure sudo has been installed, as in the following example:
@@ -283,7 +304,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 - Optionally configures sudoers with `#sudo: all` directive
 - Preserves your working directory inside the container
 - Auto-detects TTY for interactive sessions
-- Enables Docker BuildKit by default (set `DOCKER_BUILDKIT=0` to opt out); `RUN --mount`, cache mounts, and build secrets work out of the box
+- Enables Docker BuildKit by default (set `DOCKER_BUILDKIT=0` to opt out unless using `#context:`); `RUN --mount`, cache mounts, build secrets, and named contexts work out of the box
 - Automatically rebuilds the image when detecting changes to Dockerfile and build context using the hash stored as a label in the Docker image
 
 ## Security Considerations

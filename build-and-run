@@ -286,6 +286,39 @@ host_realpath_no_symlinks() {
   printf '%s\n' "${_hrns_out:-.}"
 }
 
+trim_space() {
+  printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+is_passthrough_build_context_value() {
+  _ipbcv_value=$1
+  case "$_ipbcv_value" in
+    "") return 0 ;;
+    *://*) return 0 ;;
+    target:*) return 0 ;;
+  esac
+  [[ "$_ipbcv_value" =~ ^[^[:space:]@]+@[^[:space:]:]+:.+ ]]
+}
+
+resolve_build_context_value() {
+  _rbcv_value=$1
+  if is_passthrough_build_context_value "$_rbcv_value"; then
+    printf '%s\n' "$_rbcv_value"
+    return 0
+  fi
+
+  case "$_rbcv_value" in
+    /*) host_realpath_no_symlinks "$_rbcv_value" ;;
+    *)  host_realpath_no_symlinks "$dir/$_rbcv_value" ;;
+  esac
+}
+
+build_context_value_is_local() {
+  _bcvil_value=$1
+  [ -n "$_bcvil_value" ] || return 1
+  ! is_passthrough_build_context_value "$_bcvil_value"
+}
+
 host_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | cut -d' ' -f1
@@ -649,6 +682,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
   HTTP_SERVERS=""
   HTTP_SERVER_PIDS=""
   BUILD_ARGS=()
+  BUILD_CONTEXT_ARGS=()
 
   if [ -f "$dir/Dockerfile" ]; then
     PLATFORM_LINE=$(head -n 10 "$dir/Dockerfile" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
@@ -663,6 +697,36 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
     # forces the legacy builder.
     export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
     info "Using BuildKit (DOCKER_BUILDKIT=$DOCKER_BUILDKIT)"
+
+    # Parse #context: directives into BuildKit named contexts. Values are data:
+    # split only on the first '=', trim outer whitespace, never shell-evaluate.
+    while IFS= read -r context_line; do
+      CONTEXT_SPEC=$(printf '%s' "$context_line" | sed -E 's/^#[[:space:]]*context:[[:space:]]*//')
+      CONTEXT_NAME=$(trim_space "${CONTEXT_SPEC%%=*}")
+      if [ "$CONTEXT_SPEC" = "${CONTEXT_SPEC#*=}" ]; then
+        CONTEXT_VALUE=""
+      else
+        CONTEXT_VALUE=$(trim_space "${CONTEXT_SPEC#*=}")
+      fi
+
+      if [[ ! "$CONTEXT_NAME" =~ ^[a-z_][a-z0-9_.-]*$ ]]; then
+        >&2 echo "ERROR: invalid #context: name '$CONTEXT_NAME' (expected [a-z_][a-z0-9_.-]*)"
+        exit 1
+      fi
+
+      if [ "$DOCKER_BUILDKIT" = "0" ]; then
+        >&2 echo "ERROR: #context: named contexts require BuildKit; unset DOCKER_BUILDKIT or set DOCKER_BUILDKIT=1"
+        exit 1
+      fi
+
+      RESOLVED_CONTEXT_VALUE=$(resolve_build_context_value "$CONTEXT_VALUE")
+      if build_context_value_is_local "$CONTEXT_VALUE" && [ ! -e "$RESOLVED_CONTEXT_VALUE" ]; then
+        >&2 echo "ERROR: #context: local path does not exist for ${CONTEXT_NAME}: $RESOLVED_CONTEXT_VALUE"
+        exit 1
+      fi
+
+      BUILD_CONTEXT_ARGS+=(--build-context "${CONTEXT_NAME}=${RESOLVED_CONTEXT_VALUE}")
+    done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*context:[[:space:]]*' || true)
 
     # Parse http.static directives and start HTTP servers
     HTTP_STATIC_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*http\.static:[[:space:]]*' || true)
@@ -783,7 +847,7 @@ EOF
         *)   BUILD_CMD+=(--platform="linux/${BUILD_PLATFORM}") ;;
       esac
     fi
-    BUILD_CMD+=("${BUILD_ARGS[@]}")
+    BUILD_CMD+=("${BUILD_CONTEXT_ARGS[@]}" "${BUILD_ARGS[@]}")
     # Add context hash label for change detection
     if [ -n "$CONTEXT_HASH" ]; then
       BUILD_CMD+=(--label "docker-booster.context-hash=${CONTEXT_HASH}")
