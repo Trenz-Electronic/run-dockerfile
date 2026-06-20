@@ -11,7 +11,7 @@ docker-booster handles the common setup work for containerized development:
 - **Image management** - Containers are built and rebuilt automatically as needed
 - **TTY handling** - Interactive sessions just work
 - **Common options** - Keep repeated Docker options in the Dockerfile
-- **Cross-compiling complications** - Use native compilers for the target architecture through Docker platform selection
+- **Cross-architecture builds** - Run builds in a target-architecture container when Docker supports that platform
 - **Large source files outside build context** - Easily incorporated into your Dockerfile
 
 ## Quick Start
@@ -35,7 +35,7 @@ Follow these steps
 
 3. **Create a symlink** to the build-and-run script:
    ```bash
-   cd containers/my-container && ln -s ../../docker-booster/build-and-run run
+   (cd containers/my-container && ln -s ../../docker-booster/build-and-run run)
    ```
    This is the crucial step. docker-booster follows this link back to your Docker context directory.
 
@@ -47,8 +47,8 @@ Follow these steps
    ./containers/my-container/run whoami
    # verify the CPU architecture the container is running on:
    ./containers/my-container/run uname -m
-   # only now start the build, which might invoke foreign CPU architecture compilers with QEMU fully automatically.
-   ./containers/my-container/run make -j$(nproc)
+   # run your project build command using the CPU count visible inside the container
+   ./containers/my-container/run sh -lc 'make -j$(nproc)'
    ```
 
 The image is built automatically on the first run and rebuilt when the Dockerfile's build context changes.
@@ -172,7 +172,7 @@ FROM ubuntu:22.04
 
 Supported values: Any Docker platform string (e.g., `arm64`, `amd64`, `linux/arm/v7`, `linux/arm64`)
 
-This feature can be handy when you want to avoid the hassle of cross-compiling and use native compiling on some foreign CPU architecture. It is very easy to use, but note that compilation speed will be significantly slower.
+This feature is useful when you want to build inside an emulated target-architecture environment instead of setting up a cross-compiler toolchain. docker-booster passes the platform to Docker; for foreign architectures, Docker must already be configured with the required binfmt/QEMU support. Builds under emulation can be significantly slower.
 
 ### HTTP Static File Serving
 
@@ -289,8 +289,10 @@ As long as symlinks in your docker containers point to your docker-booster/build
 **On the host:**
 
 - Linux or macOS with Docker and bash.
+- For foreign-architecture `# platform:` builds/runs, Docker must have binfmt/QEMU support configured for the requested platform.
 - GNU `tar` is optional but recommended on macOS for stronger rebuild detection that catches renames and permission changes.
 - `python3` — only when using `#http.static:`.
+- Linux `ip` command from iproute2 — only when using `#http.static:` on Linux.
 
 **In the image:**
 
