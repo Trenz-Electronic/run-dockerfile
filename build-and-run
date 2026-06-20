@@ -252,7 +252,13 @@ if [ x"${myname}" = x"user-command" ]; then
 
   # Create sudoers entry only if #sudo: all directive was specified
   if [ "$DOCKER_SUDO_MODE" = "all" ]; then
-    echo "$RUN_USER ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/10-docker-users
+    if ! command -v sudo >/dev/null 2>&1; then
+      >&2 echo "ERROR: #sudo: all requires sudo to be installed in the image"
+      exit 1
+    fi
+    mkdir -p /etc/sudoers.d
+    echo "$RUN_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/10-docker-users
+    chmod 0440 /etc/sudoers.d/10-docker-users
   fi
 
   # Create group with host group name, handling conflicts

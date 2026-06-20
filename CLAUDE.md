@@ -46,7 +46,7 @@ The script parses special comment directives from Dockerfiles:
 
 **No shell expansion in directive values**: `#option:`, `#mount:`, `#copy.home:`, `#context:`, etc. are parsed with `grep`/`sed`, not evaluated by a shell, so values like `-e DISPLAY=$DISPLAY` are passed literally. To forward a host env var, use `-e VARNAME` (no `=value`) so docker inherits the value from the docker client's environment. The exception is `#usermount:`, which expands environment-variable references in its paths. This is done safely, **not** via `eval`: `expand_usermount_path()` only substitutes well-formed `$NAME`/`${NAME}` references with their value from `printenv`, so any env var works (`$HOME`, `$PWD`, `$VITIS_ROOT`, ...), while command substitution (`$(...)`/backticks), arithmetic, and positional parameters can never match the variable-name pattern and are left literal. References are resolved longest-first so a shared prefix (e.g. `$HOME` vs `$HOMEPAGE`) does not corrupt the longer name. Regression-tested by `tests/0021` (the command-substitution case must not execute on the host).
 
-**Privilege De-escalation**: The script uses `su` (not `sudo`) to drop privileges from root to the container user. This means containers do not need `sudo` installed. If `#sudo: all` is specified, a sudoers entry is created allowing passwordless sudo (requires sudo to be installed in the image).
+**Privilege De-escalation**: The script uses `su` (not `sudo`) to drop privileges from root to the container user. This means containers do not need `sudo` installed. If `#sudo: all` is specified, setup first verifies that `sudo` is installed, creates `/etc/sudoers.d` if needed, and writes a `0440` sudoers entry allowing passwordless sudo.
 
 ## Architecture
 

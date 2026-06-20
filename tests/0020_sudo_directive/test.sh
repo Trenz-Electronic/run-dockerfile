@@ -4,14 +4,15 @@
 # - Without #sudo: directive, no sudoers entry is created
 # - With #sudo: all, sudoers entry is created and sudo works
 # - su-based privilege drop works without sudo installed
+# - With #sudo: all but no sudo installed, setup fails clearly
+# - Missing /etc/sudoers.d is created when sudo is installed
 
 set -e
 
 fail=0
 
 # Clean up any existing images
-docker rmi -f 0020_no_sudo 2>/dev/null || true
-docker rmi -f 0020_sudo_all 2>/dev/null || true
+docker rmi -f test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing 2>/dev/null || true
 
 echo "=== Test 1: Without #sudo: directive, su works but sudo not configured ==="
 mkdir -p test_no_sudo
@@ -54,7 +55,46 @@ fi
 cd ..
 
 echo ""
-echo "=== Test 3: Without #sudo: directive, sudo fails (not configured) ==="
+echo "=== Test 3: With #sudo: all but no sudo installed, setup fails clearly ==="
+mkdir -p test_sudo_missing
+cd test_sudo_missing
+cat > Dockerfile <<'EOF'
+#sudo: all
+FROM alpine:latest
+EOF
+ln -sf ../../../build-and-run run
+output=$(./run true 2>&1 || true)
+if echo "$output" | grep -F "ERROR: #sudo: all requires sudo to be installed in the image" >/dev/null; then
+    echo "PASS: #sudo: all reports missing sudo clearly"
+else
+    echo "FAIL: #sudo: all missing-sudo error was unclear"
+    echo "Output: $output"
+    fail=1
+fi
+cd ..
+
+echo ""
+echo "=== Test 4: With #sudo: all, missing /etc/sudoers.d is created ==="
+mkdir -p test_sudoers_dir_missing
+cd test_sudoers_dir_missing
+cat > Dockerfile <<'EOF'
+#sudo: all
+FROM alpine:latest
+RUN apk add --no-cache sudo && rm -rf /etc/sudoers.d
+EOF
+ln -sf ../../../build-and-run run
+output=$(./run sh -c 'test "$(stat -c %a /etc/sudoers.d/10-docker-users)" = 440 && sudo whoami' 2>&1)
+if echo "$output" | grep -q "root"; then
+    echo "PASS: missing sudoers.d was created and sudo works"
+else
+    echo "FAIL: sudoers.d missing-directory recovery failed"
+    echo "Output: $output"
+    fail=1
+fi
+cd ..
+
+echo ""
+echo "=== Test 5: Without #sudo: directive, sudo fails (not configured) ==="
 mkdir -p test_sudo_fail
 cd test_sudo_fail
 cat > Dockerfile <<'EOF'
@@ -78,8 +118,8 @@ fi
 cd ..
 
 # Cleanup
-rm -rf test_no_sudo test_sudo_all test_sudo_fail
-docker rmi -f 0020_no_sudo 0020_sudo_all 2>/dev/null || true
+rm -rf test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing
+docker rmi -f test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing 2>/dev/null || true
 
 if [ "$fail" = 0 ]; then
     echo ""

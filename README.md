@@ -340,7 +340,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 
 - `/bin/sh`, `su`, and writable `/etc/passwd` and `/etc/group` — users and groups are created by appending entries directly, so no `useradd` is needed. Standard Debian, Ubuntu, Fedora and Alpine base images all qualify; scratch and distroless images do not.
 - `tar` with gzip support — only when using `#copy.home:` (the files are delivered as a tarball extracted inside the container).
-- `sudo` and `/etc/sudoers.d/` — only when using `#sudo: all`.
+- `sudo` — only when using `#sudo: all`; docker-booster creates `/etc/sudoers.d/` if it is missing.
 
 ## Technical Details
 
