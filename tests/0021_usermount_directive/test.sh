@@ -10,6 +10,8 @@
 
 set -e
 
+. ../lib/portable.sh
+
 fail=0
 
 # Unique test directory names to avoid conflicts
@@ -59,7 +61,7 @@ else
 fi
 
 # Verify ownership (should be current user, not root)
-owner_uid=$(stat -c %u "$TESTDIR1")
+owner_uid=$(stat_uid "$TESTDIR1")
 if [ "$owner_uid" = "$(id -u)" ]; then
     echo "PASS: Directory owned by current user"
 else
@@ -224,7 +226,7 @@ fi
 
 # Verify ownership (current user, not root)
 if [ -d "$DB_SPACE_DIR" ]; then
-    owner_uid=$(stat -c %u "$DB_SPACE_DIR")
+    owner_uid=$(stat_uid "$DB_SPACE_DIR")
     if [ "$owner_uid" = "$(id -u)" ]; then
         echo "PASS: spaced directory owned by current user"
     else

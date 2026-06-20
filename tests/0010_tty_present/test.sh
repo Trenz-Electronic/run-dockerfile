@@ -3,7 +3,9 @@
 
 set -e
 
-output=$(script -q -c "./run tty" /dev/null 2>&1) || true
+. ../lib/portable.sh
+
+output=$(run_with_pty ./run tty 2>&1) || true
 
 case "$output" in
     */dev/pts/*|*/dev/tty*)

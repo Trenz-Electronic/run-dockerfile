@@ -239,7 +239,75 @@ if [ x"${myname}" = x"user-command" ]; then
   exit 3
 fi
 
-real_self=$(realpath --no-symlinks "$0")
+host_realpath_no_symlinks() {
+  _hrns_path=$1
+  case $_hrns_path in
+    /*) ;;
+    *) _hrns_path=$PWD/$_hrns_path ;;
+  esac
+
+  _hrns_prefix=""
+  case $_hrns_path in
+    /*)
+      _hrns_prefix="/"
+      _hrns_path=${_hrns_path#/}
+      ;;
+  esac
+
+  _hrns_parts=()
+  _hrns_rest=$_hrns_path
+  while [ -n "$_hrns_rest" ]; do
+    _hrns_part=${_hrns_rest%%/*}
+    if [ "$_hrns_part" = "$_hrns_rest" ]; then
+      _hrns_rest=""
+    else
+      _hrns_rest=${_hrns_rest#*/}
+    fi
+
+    case $_hrns_part in
+      ""|.) ;;
+      ..)
+        if [ ${#_hrns_parts[@]} -gt 0 ]; then
+          unset "_hrns_parts[${#_hrns_parts[@]}-1]"
+        elif [ -z "$_hrns_prefix" ]; then
+          _hrns_parts+=("..")
+        fi
+        ;;
+      *) _hrns_parts+=("$_hrns_part") ;;
+    esac
+  done
+
+  _hrns_out=$_hrns_prefix
+  _hrns_sep=""
+  for _hrns_part in "${_hrns_parts[@]}"; do
+    _hrns_out=$_hrns_out$_hrns_sep$_hrns_part
+    _hrns_sep="/"
+  done
+  printf '%s\n' "${_hrns_out:-.}"
+}
+
+host_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 -r | cut -d' ' -f1
+  else
+    >&2 echo "ERROR: Need one of sha256sum, shasum, or openssl for SHA-256 hashing"
+    return 1
+  fi
+}
+
+host_tar() {
+  if command -v gtar >/dev/null 2>&1; then
+    printf '%s\n' gtar
+  else
+    printf '%s\n' tar
+  fi
+}
+
+real_self=$(host_realpath_no_symlinks "$0")
 dir=$(dirname "${real_self}")
 tag=$(basename "$dir")
 
@@ -532,13 +600,14 @@ fi
 # original content-only hash, which is weaker (misses pure renames and mode changes).
 compute_context_hash() {
   _cch_dir=$1
-  if tar --sort=name --version >/dev/null 2>&1; then
-    tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+  _cch_tar=$(host_tar)
+  if "$_cch_tar" --sort=name --version >/dev/null 2>&1; then
+    "$_cch_tar" --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
         --exclude='*/.git' --exclude='*/.git/*' --exclude='*.swp' \
-        -cf - -C "$_cch_dir" . 2>/dev/null | sha256sum | cut -d' ' -f1
+        -cf - -C "$_cch_dir" . 2>/dev/null | host_sha256
   else
     find "$_cch_dir" -type f ! -path '*/.git/*' ! -name '*.swp' 2>/dev/null \
-      | sort | xargs cat 2>/dev/null | sha256sum | cut -d' ' -f1
+      | sort | xargs cat 2>/dev/null | host_sha256
   fi
 }
 
@@ -771,7 +840,7 @@ if [ ${#COPY_HOME_FILES[@]} -gt 0 ]; then
 
   # Try to create tar, check for missing files. The file list is a quoted array,
   # so filenames containing spaces are passed to tar as single arguments.
-  if tar czf "$COPY_HOME_TAR" "${COPY_HOME_FILES[@]}" 2>/dev/null; then
+  if "$(host_tar)" czf "$COPY_HOME_TAR" "${COPY_HOME_FILES[@]}" 2>/dev/null; then
     COPY_HOME_VARG=(-v "$COPY_HOME_TAR:/tmp/home-files.tar.gz:ro")
     info "Collected home files for container: ${COPY_HOME_FILES[*]}"
   else
@@ -900,4 +969,3 @@ exec docker run --rm -i "${TFLAG[@]}" \
   "${DOCKER_OPTIONS[@]}" \
   "$tag" \
   /bin/user-command "$USER" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@"
-

@@ -265,7 +265,8 @@ As long as symlinks in your docker containers point to your docker-booster/build
 
 **On the host:**
 
-- Linux with Docker and bash. macOS works with GNU coreutils and GNU tar installed (the script uses GNU `realpath` and `sha256sum`; GNU `tar` makes rebuild detection catch renames and permission changes).
+- Linux or macOS with Docker and bash.
+- GNU `tar` is optional but recommended on macOS for stronger rebuild detection that catches renames and permission changes.
 - `python3` — only when using `#http.static:`.
 
 **In the image:**

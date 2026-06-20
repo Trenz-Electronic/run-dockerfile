@@ -12,6 +12,8 @@ docker-booster is a single-script Docker workflow tool that automates image buil
 
 - `build-and-run` - The main script. This is the entire tool. The host side requires
   **bash** (`#!/usr/bin/env bash`); see the "Two shells" note under Architecture.
+- `tests/lib/portable.sh` - POSIX `/bin/sh` helpers for test-only host portability
+  checks. Product portability helpers belong in `build-and-run`.
 - `README.md` - User documentation. In the README.md, the focus is on what it does for users, including technical details only when necessary for using the docker-booster. The implementation details should go into CLAUDE.md.
 
 ## Dockerfile Directive Syntax
@@ -72,8 +74,8 @@ The script enables Docker BuildKit by default (`export DOCKER_BUILDKIT="${DOCKER
 
 The script implements hash-based rebuild detection:
 - Calculates a SHA-256 hash of the build context (excluding `.git/`, `*.swp`) via `compute_context_hash()`
-- Preferred path uses a **deterministic GNU `tar` stream** (`--sort=name --mtime=... --owner=0 --group=0 --numeric-owner`) piped to `sha256sum`. Hashing the archive (not just concatenated content) folds each entry's **path, mode, and symlink target** into the fingerprint, so a rename or `chmod` that changes the built image triggers a rebuild; `mtime`/owner are normalized so unrelated metadata churn does not.
-- Falls back to the original content-only hash (`find … | xargs cat | sha256sum`) when GNU `tar` is unavailable (e.g. stock macOS). The fallback is weaker: it misses pure renames and mode changes.
+- Preferred path uses a **deterministic GNU `tar` stream** (`--sort=name --mtime=... --owner=0 --group=0 --numeric-owner`) piped to the host SHA-256 helper. Hashing the archive (not just concatenated content) folds each entry's **path, mode, and symlink target** into the fingerprint, so a rename or `chmod` that changes the built image triggers a rebuild; `mtime`/owner are normalized so unrelated metadata churn does not.
+- Falls back to the original content-only hash (`find … | xargs cat | host SHA-256 helper`) when GNU `tar` is unavailable (e.g. stock macOS). The fallback is weaker: it misses pure renames and mode changes.
 - Stores hash as Docker image label: `docker-booster.context-hash`
 - On subsequent runs, compares current hash with label from existing image
 - Skips rebuild if hashes match, dramatically speeding up development workflow
