@@ -88,7 +88,7 @@ The script implements hash-based rebuild detection:
 - Named-context contents referenced by `#context:` are not included in this hash. The directive line itself remains in the Dockerfile/main-context hash, so changing `#context:` values triggers rebuilds, but changing only files inside a named context requires `docker rmi <image-name>` or another forced rebuild.
 - Skips rebuild if hashes match, dramatically speeding up development workflow
 - No external cache files needed - hash stored in Docker image metadata
-- Single optimized `docker inspect` call retrieves architecture, creation time, and hash label
+- Single optimized `docker inspect` call retrieves architecture and the context-hash label
 
 **Design note — the hash is deliberately conservative:** It fingerprints the whole build context, including the Dockerfile and the run-time-only directives in it (`#mount:`, `#copy.home:`, `#usermount:`, `#option:`, `#sudo:`). Editing one of those directives therefore triggers a rebuild even though it does not affect the built image. It also does **not** parse `.dockerignore`, so a change to an ignored file can trigger a rebuild Docker itself would skip. Both are intentional over-hashing and should not be "optimized" away:
 - The spurious rebuild is nearly free. Docker strips comment lines during parsing, so they never participate in any layer's cache key; the forced `docker build` hits cache on every layer and finishes in ~1s. The only real waste is build-phase wrapper work (notably `#http.static:` server startup).
@@ -169,3 +169,5 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0033_invalid_image_name` - Tests a container directory name that is not a valid Docker image name fails early with a clear message
 - `0034_verbose_nonnumeric` - Tests a non-numeric `DOCKER_BOOSTER_VERBOSE` value does not make `info()` emit a shell "integer expression expected" error
 - `0035_env_name_injection` - Tests a command-line `-e` whose variable name embeds shell metacharacters is rejected at the container-side `eval` sink, not executed
+- `0036_unset_user_env` - Tests the host username is resolved from `id -un` (not the `$USER` env var), so the user is mapped correctly when `$USER` is unset and a stale `$USER` does not leak into the mapping
+- `0037_option_inherit_env` - Tests the inherit form `#option: -e VAR` (no `=value`) is added to the ENV-preserve list like the command-line `-e VAR`; the decisive check is a variable unset on the host becoming defined inside the container

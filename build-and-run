@@ -140,6 +140,23 @@ if [ x"${myname}" = x"user-command" ]; then
   HOME=$1
   shift || exit $?
 
+  # Exact-match lookup of an /etc/passwd or /etc/group entry by its first field.
+  # Unlike `grep "^name:"`, the name is matched literally (the case pattern is
+  # quoted), so a name containing regex/glob metacharacters - e.g. "john.doe" -
+  # cannot match the wrong entry. Prints the first matching line; returns 1 if
+  # none. The `|| [ -n "$_lce_line" ]` also handles a final line that lacks a
+  # trailing newline.
+  lookup_colon_entry() {
+    _lce_file=$1
+    _lce_name=$2
+    while IFS= read -r _lce_line || [ -n "$_lce_line" ]; do
+      case $_lce_line in
+        "$_lce_name":*) printf '%s\n' "$_lce_line"; return 0 ;;
+      esac
+    done < "$_lce_file"
+    return 1
+  }
+
   # Add ourselves to the system. The user we will actually su to is RUN_USER.
   #
   # Reuse the image's existing user ONLY if it already matches the host identity
@@ -150,13 +167,13 @@ if [ x"${myname}" = x"user-command" ]; then
   # user "${USER}_${USERID}" that carries the host uid/gid - mirroring how a group
   # name clash is handled below.
   RUN_USER=$USER
-  EXISTING_PASSWD=$(grep "^$USER:" /etc/passwd | head -n1)
+  EXISTING_PASSWD=$(lookup_colon_entry /etc/passwd "$USER" || true)
   if [ -n "$EXISTING_PASSWD" ]; then
     EXISTING_UID=$(echo "$EXISTING_PASSWD" | cut -d: -f3)
     EXISTING_GID=$(echo "$EXISTING_PASSWD" | cut -d: -f4)
     if [ "$EXISTING_UID" != "$USERID" ] || [ "$EXISTING_GID" != "$GROUPID" ]; then
       RUN_USER="${USER}_${USERID}"
-      if ! grep -q "^$RUN_USER:" /etc/passwd; then
+      if ! lookup_colon_entry /etc/passwd "$RUN_USER" >/dev/null; then
         echo "$RUN_USER:*:$USERID:$GROUPID:Docker runner:$HOME:/bin/bash" >> /etc/passwd
       fi
     fi
@@ -171,13 +188,13 @@ if [ x"${myname}" = x"user-command" ]; then
   fi
 
   # Create group with host group name, handling conflicts
-  if grep -q "^$GROUPNAME:" /etc/group; then
+  if lookup_colon_entry /etc/group "$GROUPNAME" >/dev/null; then
     # Group name exists, check if GID matches
-    EXISTING_GID=$(grep "^$GROUPNAME:" /etc/group | cut -d: -f3)
+    EXISTING_GID=$(lookup_colon_entry /etc/group "$GROUPNAME" | cut -d: -f3)
     if [ "$EXISTING_GID" != "$GROUPID" ]; then
       # GID conflict, use alternate name
       GROUPNAME="${GROUPNAME}_$GROUPID"
-      if ! grep -q "^$GROUPNAME:" /etc/group; then
+      if ! lookup_colon_entry /etc/group "$GROUPNAME" >/dev/null; then
         echo "$GROUPNAME::$GROUPID::" >> /etc/group
       fi
     fi
@@ -579,6 +596,11 @@ fi
 # worktree, so test with -e rather than -d. Always returns 0 with the repo
 # root on stdout (or empty stdout when not in a repo) - returning non-zero
 # would trip `set -e` at the command-substitution call site.
+#
+# The loop always terminates and needs no endless-loop guard: every caller passes
+# an absolute path ($PWD), and repeated `dirname` on an absolute path strictly
+# shortens it until it reaches "/", where the loop stops. (`dirname` is only a
+# fixed point at "/" and ".", and "." never arises from an absolute path.)
 find_git_root() {
   search_dir="$1"
   while [ "$search_dir" != "/" ]; do
@@ -650,16 +672,14 @@ else
   fi
 fi
 
-# Optimized inspect: get architecture, creation time, and context hash in one call
-INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{.Created}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
+# Optimized inspect: get architecture and context hash in one call
+INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
 
 if [ -n "$INSPECT_DATA" ]; then
   IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
-  IMG_CREATED=$(echo "$INSPECT_DATA" | cut -d'|' -f2)
-  IMG_HASH=$(echo "$INSPECT_DATA" | cut -d'|' -f3)
+  IMG_HASH=$(echo "$INSPECT_DATA" | cut -d'|' -f2)
 else
   IMGARCH=""
-  IMG_CREATED=""
   IMG_HASH=""
 fi
 
@@ -919,21 +939,18 @@ EOF
     BUILD_CMD+=("$dir")
 
     >&2 echo "Running: ${BUILD_CMD[*]}"
+    # `set -e` plus the armed EXIT/INT/TERM trap handle a failed build: a non-zero
+    # `docker build` exits here and the trap tears down the HTTP servers. On
+    # success we clean up explicitly and disarm the trap before continuing.
     "${BUILD_CMD[@]}"
-    BUILD_RESULT=$?
-
     cleanup_http_servers
     trap - EXIT INT TERM
-
-    if [ $BUILD_RESULT -ne 0 ]; then
-      exit $BUILD_RESULT
-    fi
   else
     docker build -t "$tag" --progress=plain "$dir"
   fi
 
   # Update architecture after build (reuse optimized inspect format)
-  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{.Created}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
+  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
   if [ -n "$INSPECT_DATA" ]; then
     IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
   fi
@@ -959,11 +976,22 @@ if [ -n "$IMGARCH" ]; then
   esac
 fi
 
+# Cleanup function for the temporary #copy.home: tar file. Defined here - before
+# the archive is created - so the trap can be armed the instant the file exists,
+# leaving no window in which a later failure (e.g. a #usermount: mkdir) could
+# leak the archive in /tmp.
+cleanup_copy_home() {
+  if [ -n "$COPY_HOME_TAR" ] && [ -f "$COPY_HOME_TAR" ]; then
+    rm -f "$COPY_HOME_TAR"
+  fi
+}
+
 # Handle #copy.home: files - create tar archive
 COPY_HOME_VARG=()
 COPY_HOME_TAR=""
 if [ ${#COPY_HOME_FILES[@]} -gt 0 ]; then
   COPY_HOME_TAR="/tmp/docker-booster-home-files-$$.tar.gz"
+  trap cleanup_copy_home EXIT INT TERM
   cd "$HOME"
 
   # Try to create tar, check for missing files. The file list is a quoted array,
@@ -1023,8 +1051,30 @@ if [ -f "$dir/Dockerfile" ]; then
 $OPTION_VALUES
 EOF
     set +f
-    # Extract env var names from -e/--env options for ENV preservation.
-    OPTION_ENV_VARS=$(echo "$OPTION_VALUES" | grep -oE '(-e|--env=?)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' | sed -E 's/(-e|--env=?)[[:space:]]*//' | sed 's/=$//' | tr '\n' ',' | sed 's/,$//')
+    # Extract env var names from -e/--env options for ENV preservation. Walk the
+    # parsed token array (not the raw text) so we only match genuine option
+    # tokens - never an "-e" substring inside a word like "--entrypoint" - and so
+    # the inherit form `-e NAME` (no '=') is captured just like on the command
+    # line. Mirrors the -e / --env / --env= forms the command-line parser accepts.
+    _opt_n=${#DOCKER_OPTIONS[@]}
+    _opt_i=0
+    while [ "$_opt_i" -lt "$_opt_n" ]; do
+      _opt_name=""
+      case "${DOCKER_OPTIONS[$_opt_i]}" in
+        -e|--env)
+          _opt_i=$((_opt_i + 1))
+          _opt_name=${DOCKER_OPTIONS[$_opt_i]%%=*}
+          ;;
+        --env=*)
+          _opt_name=${DOCKER_OPTIONS[$_opt_i]#--env=}
+          _opt_name=${_opt_name%%=*}
+          ;;
+      esac
+      if [ -n "$_opt_name" ]; then
+        OPTION_ENV_VARS="${OPTION_ENV_VARS:+$OPTION_ENV_VARS,}$_opt_name"
+      fi
+      _opt_i=$((_opt_i + 1))
+    done
   fi
 fi
 
@@ -1087,14 +1137,10 @@ if [ -n "$ENV_VARS" ]; then
   PRESERVE_ENV_ARG=(-e "DOCKER_PRESERVE_ENV=$ENV_VARS")
 fi
 
-# Cleanup function for temporary tar file
-cleanup_copy_home() {
-  if [ -n "$COPY_HOME_TAR" ] && [ -f "$COPY_HOME_TAR" ]; then
-    rm -f "$COPY_HOME_TAR"
-  fi
-}
-trap cleanup_copy_home EXIT INT TERM
-
+# Identify the host user from `id`, not the $USER env var: `id` is authoritative
+# and always present, whereas $USER can be empty (cron, CI, `env -i`) or stale
+# (e.g. after `su -m`), which would create a mismatched or malformed container
+# user. The UID, GID and group name already come from `id` for the same reason.
 DOCKER_RUN_CMD=(docker run --rm -i "${TFLAG[@]}" \
   -v "${real_self}:/bin/user-command:ro" \
   -v "$MDIR:$MDIR" \
@@ -1109,7 +1155,7 @@ DOCKER_RUN_CMD=(docker run --rm -i "${TFLAG[@]}" \
   "${CMDLINE_DOCKER_ARGS[@]}" \
   "${DOCKER_OPTIONS[@]}" \
   "$tag" \
-  /bin/user-command "$USER" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@")
+  /bin/user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@")
 
 # All accumulated docker arguments are bash arrays expanded as "${arr[@]}", and
 # every path/value is quoted, so spaces and glob characters are passed verbatim.
