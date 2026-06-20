@@ -332,7 +332,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 
 - Linux or macOS with Docker and bash.
 - For foreign-architecture `# platform:` builds/runs, Docker must have binfmt/QEMU support configured for the requested platform.
-- GNU `tar` is optional but recommended on macOS for stronger rebuild detection that catches renames and permission changes.
+- GNU `tar` is optional; when unavailable, docker-booster uses a portable metadata-manifest hash for rebuild detection.
 - `python3` — only when using `#http.static:`.
 - Linux `ip` command from iproute2 — only when using `#http.static:` on Linux.
 

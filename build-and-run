@@ -786,8 +786,37 @@ fi
 #
 # The hash stays deliberately conservative: it does NOT parse .dockerignore, so it
 # may rebuild more often than Docker strictly requires (safe - see the design note
-# in CLAUDE.md). On hosts without GNU tar (e.g. stock macOS) it falls back to the
-# original content-only hash, which is weaker (misses pure renames and mode changes).
+# in CLAUDE.md). On hosts without GNU tar (e.g. stock macOS) it falls back to a
+# deterministic metadata manifest that still includes PATH, MODE and symlink TARGET.
+host_file_mode() {
+  if stat -c '%a' "$1" >/dev/null 2>&1; then
+    stat -c '%a' "$1"
+  else
+    stat -f '%Lp' "$1"
+  fi
+}
+
+compute_context_hash_fallback() {
+  _cch_dir=$1
+  find "$_cch_dir" \( -path '*/.git' -o -path '*/.git/*' -o -name '*.swp' \) -prune -o -print 2>/dev/null \
+    | sort | while IFS= read -r _cch_path; do
+      _cch_rel=${_cch_path#"$_cch_dir"/}
+      if [ "$_cch_path" = "$_cch_dir" ]; then
+        _cch_rel=.
+      fi
+      _cch_mode=$(host_file_mode "$_cch_path")
+
+      if [ -L "$_cch_path" ]; then
+        printf 'L\t%s\t%s\t%s\n' "$_cch_mode" "$_cch_rel" "$(readlink "$_cch_path")"
+      elif [ -d "$_cch_path" ]; then
+        printf 'D\t%s\t%s\n' "$_cch_mode" "$_cch_rel"
+      elif [ -f "$_cch_path" ]; then
+        _cch_file_hash=$(host_sha256 < "$_cch_path")
+        printf 'F\t%s\t%s\t%s\n' "$_cch_mode" "$_cch_rel" "$_cch_file_hash"
+      fi
+    done | host_sha256
+}
+
 compute_context_hash() {
   _cch_dir=$1
   _cch_tar=$(host_tar)
@@ -796,8 +825,7 @@ compute_context_hash() {
         --exclude='*/.git' --exclude='*/.git/*' --exclude='*.swp' \
         -cf - -C "$_cch_dir" . 2>/dev/null | host_sha256
   else
-    find "$_cch_dir" -type f ! -path '*/.git/*' ! -name '*.swp' 2>/dev/null \
-      | sort | while IFS= read -r _cch_file; do cat "$_cch_file"; done 2>/dev/null | host_sha256
+    compute_context_hash_fallback "$_cch_dir"
   fi
 }
 

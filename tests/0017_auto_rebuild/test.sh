@@ -5,8 +5,8 @@
 # - Subsequent runs skip rebuild when nothing changed
 # - Changes to Dockerfile trigger rebuild
 # - Changes to context files trigger rebuild
-# - Renaming a file triggers rebuild (filename is part of the hash; GNU tar)
-# - Changing a file's mode triggers rebuild (mode is part of the hash; GNU tar)
+# - Renaming a file triggers rebuild (filename is part of the hash)
+# - Changing a file's mode triggers rebuild (mode is part of the hash)
 
 set -e
 
@@ -146,40 +146,34 @@ esac
 
 echo ""
 echo "=== Test 8: Renaming a context file triggers rebuild (filename in hash) ==="
-# These two cases exercise PATH/MODE sensitivity, which only the deterministic
-# (GNU tar) hash provides; on a content-only fallback host they are skipped.
-if tar --sort=name --version >/dev/null 2>&1; then
-    echo "rename-content" > rename_me.txt
-    ./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
-    mv rename_me.txt renamed.txt                         # same content, different name
-    output=$(./run echo "after rename" 2>&1)
-    if echo "$output" | grep -q "rebuilding\|changes detected"; then
-        echo "PASS: Rename triggered rebuild"
-    else
-        echo "FAIL: Rename did not trigger rebuild (filename ignored by hash)"
-        echo "Output: $output"
-        fail=1
-    fi
-    rm -f renamed.txt
-
-    echo ""
-    echo "=== Test 9: Changing a file's mode triggers rebuild (mode in hash) ==="
-    echo "#!/bin/sh" > mode_test.sh
-    chmod 644 mode_test.sh
-    ./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
-    chmod 755 mode_test.sh                               # mode change only, same content
-    output=$(./run echo "after chmod" 2>&1)
-    if echo "$output" | grep -q "rebuilding\|changes detected"; then
-        echo "PASS: chmod triggered rebuild"
-    else
-        echo "FAIL: chmod did not trigger rebuild (mode ignored by hash)"
-        echo "Output: $output"
-        fail=1
-    fi
-    rm -f mode_test.sh
+echo "rename-content" > rename_me.txt
+./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
+mv rename_me.txt renamed.txt                         # same content, different name
+output=$(./run echo "after rename" 2>&1)
+if echo "$output" | grep -q "rebuilding\|changes detected"; then
+    echo "PASS: Rename triggered rebuild"
 else
-    echo "SKIP: Tests 8-9 (rename/mode detection) require GNU tar"
+    echo "FAIL: Rename did not trigger rebuild (filename ignored by hash)"
+    echo "Output: $output"
+    fail=1
 fi
+rm -f renamed.txt
+
+echo ""
+echo "=== Test 9: Changing a file's mode triggers rebuild (mode in hash) ==="
+echo "#!/bin/sh" > mode_test.sh
+chmod 644 mode_test.sh
+./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
+chmod 755 mode_test.sh                               # mode change only, same content
+output=$(./run echo "after chmod" 2>&1)
+if echo "$output" | grep -q "rebuilding\|changes detected"; then
+    echo "PASS: chmod triggered rebuild"
+else
+    echo "FAIL: chmod did not trigger rebuild (mode ignored by hash)"
+    echo "Output: $output"
+    fail=1
+fi
+rm -f mode_test.sh
 
 echo ""
 echo "=== Test 10: Fallback hash handles filenames with spaces ==="
@@ -214,6 +208,84 @@ else
     fail=1
 fi
 rm -rf "$fakebin" "fallback space.txt"
+
+echo ""
+echo "=== Test 11: Fallback hash detects rename, mode, and symlink target changes ==="
+fakebin="$(pwd)/fake-tar-bin-0017"
+mkdir -p "$fakebin"
+cat > "$fakebin/gtar" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+cat > "$fakebin/tar" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$fakebin/gtar" "$fakebin/tar"
+
+echo "fallback rename" > fallback_rename_a.txt
+PATH="$fakebin:$PATH" ./run echo "fallback rename baseline" >/dev/null 2>&1 || {
+    echo "FAIL: Fallback rename baseline run failed"
+    fail=1
+}
+mv fallback_rename_a.txt fallback_rename_b.txt
+output=$(PATH="$fakebin:$PATH" ./run echo "after fallback rename" 2>&1) || {
+    echo "FAIL: Fallback rename run failed"
+    echo "Output: $output"
+    fail=1
+}
+if echo "$output" | grep -q "rebuilding\|changes detected"; then
+    echo "PASS: Fallback hash detected rename"
+else
+    echo "FAIL: Fallback hash missed rename"
+    echo "Output: $output"
+    fail=1
+fi
+rm -f fallback_rename_b.txt
+
+echo "#!/bin/sh" > fallback_mode.sh
+chmod 644 fallback_mode.sh
+PATH="$fakebin:$PATH" ./run echo "fallback mode baseline" >/dev/null 2>&1 || {
+    echo "FAIL: Fallback mode baseline run failed"
+    fail=1
+}
+chmod 755 fallback_mode.sh
+output=$(PATH="$fakebin:$PATH" ./run echo "after fallback chmod" 2>&1) || {
+    echo "FAIL: Fallback chmod run failed"
+    echo "Output: $output"
+    fail=1
+}
+if echo "$output" | grep -q "rebuilding\|changes detected"; then
+    echo "PASS: Fallback hash detected chmod"
+else
+    echo "FAIL: Fallback hash missed chmod"
+    echo "Output: $output"
+    fail=1
+fi
+rm -f fallback_mode.sh
+
+echo "target a" > target-a
+echo "target b" > target-b
+ln -s target-a fallback_link
+PATH="$fakebin:$PATH" ./run echo "fallback symlink baseline" >/dev/null 2>&1 || {
+    echo "FAIL: Fallback symlink baseline run failed"
+    fail=1
+}
+rm -f fallback_link
+ln -s target-b fallback_link
+output=$(PATH="$fakebin:$PATH" ./run echo "after fallback symlink" 2>&1) || {
+    echo "FAIL: Fallback symlink run failed"
+    echo "Output: $output"
+    fail=1
+}
+if echo "$output" | grep -q "rebuilding\|changes detected"; then
+    echo "PASS: Fallback hash detected symlink target change"
+else
+    echo "FAIL: Fallback hash missed symlink target change"
+    echo "Output: $output"
+    fail=1
+fi
+rm -rf "$fakebin" fallback_link target-a target-b
 
 if [ "$fail" = 0 ]; then
     echo ""

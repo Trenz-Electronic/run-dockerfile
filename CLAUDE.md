@@ -83,7 +83,7 @@ The script always enables Docker BuildKit (`export DOCKER_BUILDKIT=1` before `do
 The script implements hash-based rebuild detection:
 - Calculates a SHA-256 hash of the build context (excluding `.git/`, `*.swp`) via `compute_context_hash()`
 - Preferred path uses a **deterministic GNU `tar` stream** (`--sort=name --mtime=... --owner=0 --group=0 --numeric-owner`) piped to the host SHA-256 helper. Hashing the archive (not just concatenated content) folds each entry's **path, mode, and symlink target** into the fingerprint, so a rename or `chmod` that changes the built image triggers a rebuild; `mtime`/owner are normalized so unrelated metadata churn does not.
-- Falls back to a content-only hash (`find … | sort | while read; cat "$file" | host SHA-256 helper`) when GNU `tar` is unavailable (e.g. stock macOS). The fallback is weaker: it misses pure renames and mode changes.
+- Falls back to a portable metadata manifest when GNU `tar` is unavailable (e.g. stock macOS). The manifest sorts context entries and hashes each entry's path, type, mode, and either file-content digest or symlink target, so pure renames, chmod changes, and symlink retargets are still detected.
 - Stores hash as Docker image label: `docker-booster.context-hash`
 - On subsequent runs, compares current hash with label from existing image
 - Named-context contents referenced by `#context:` are not included in this hash. The directive line itself remains in the Dockerfile/main-context hash, so changing `#context:` values triggers rebuilds, but changing only files inside a named context requires `docker rmi <image-name>` or another forced rebuild.
@@ -151,7 +151,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0014_cmdline_options` - Tests common docker options (-v, --network, --cpus)
 - `0015_user_mapping_conflict` - Tests group name conflict handling (rename with GID suffix)
 - `0016_buildkit_auto` - Tests BuildKit is enabled by default (a `RUN --mount` Dockerfile builds without any opt-in)
-- `0017_auto_rebuild` - Tests hash-based automatic rebuild detection (skip rebuild when unchanged, detect Dockerfile and context changes, and — with GNU tar — file renames and mode changes)
+- `0017_auto_rebuild` - Tests hash-based automatic rebuild detection (skip rebuild when unchanged, detect Dockerfile and context changes, and detect file renames, mode changes, and fallback metadata changes)
 - `0018_mount_directives` - Tests `#mount:` directive (pwd, .git, home, FIRST-found semantics)
 - `0019_copy_home` - Tests `#copy.home:` directive (single file, multiple files, missing file error)
 - `0020_sudo_directive` - Tests `#sudo: all` directive (su-based privilege drop, optional sudoers configuration)
