@@ -22,41 +22,46 @@
 # - TTY detection for interactive sessions
 #
 # SETUP:
-# 1. Create a directory with your desired container name:
-#    mkdir my-container
+# 1. Create a container directory in your project (not inside this submodule):
+#    mkdir -p containers/my-container
 #
-# 2. Add a Dockerfile to this directory:
-#    echo 'FROM ubuntu:20.04' > my-container/Dockerfile
+# 2. Add a Dockerfile to that directory:
+#    echo 'FROM ubuntu:22.04' > containers/my-container/Dockerfile
 #
-# 3. Create a symlink to this script in the container directory:
-#    cd my-container && ln -s ../build-and-run run
+# 3. Symlink this script as "run" next to the Dockerfile. The symlink target is
+#    deliberately NOT followed when locating the container directory, so "run"
+#    must live beside the Dockerfile it builds:
+#    (cd containers/my-container && ln -s ../../docker-booster/build-and-run run)
 #
-# 4. (Optional) Add platform directive to Dockerfile for cross-platform builds:
+# 4. (Optional) Add a platform directive to the Dockerfile for cross-platform builds:
 #    # platform: arm64
-#    FROM ubuntu:20.04
+#    FROM ubuntu:22.04
 #
 # USAGE EXAMPLES:
-#   ./my-container/run bash                    # Start interactive bash
-#   ./my-container/run make                    # Run make command
-#   ./my-container/run python3 script.py      # Run Python script
+#   ./containers/my-container/run bash               # Start interactive bash
+#   ./containers/my-container/run make               # Run make command
+#   ./containers/my-container/run python3 script.py  # Run Python script
 #
 # PLATFORM SUPPORT:
 # Add a platform comment in the first 20 lines of your Dockerfile:
 #   # platform: arm64     # For ARM64/aarch64
 #   # platform: amd64     # For x86_64
 #
-# If no platform directive is found, Docker will use the host platform.
+# If no platform directive is found, Docker uses the host platform.
 #
-# VOLUME MOUNTING:
-# - $HOME/* paths: Mount $HOME only
-# - /mnt/* paths: Mount /mnt + $HOME
-# - Other paths: Mount current directory + $HOME
+# VOLUME MOUNTING (see the #mount: directive and README.md for details):
+# - Default: mount the git repository root if found, otherwise the current dir.
+# - #mount: selects explicitly with the .git / pwd / home keywords (first match).
+# - $HOME is NOT mounted unless requested (#mount: home, or #copy.home: for
+#   individual files).
 #
 # TECHNICAL NOTES:
-# - Creates temporary user inside container matching host UID/GID
-# - Grants sudo access to created user
-# - Preserves working directory inside container
+# - Creates a temporary user inside the container matching the host UID/GID
+# - Drops privileges with su (no sudo required); #sudo: all adds passwordless sudo
+# - Preserves the working directory inside the container
 # - Auto-detects TTY for interactive sessions
+#
+# See README.md for the full directive reference and CLAUDE.md for design notes.
 
 set -e
 
@@ -65,7 +70,9 @@ DOCKER_BOOSTER_VERBOSE=${DOCKER_BOOSTER_VERBOSE:-0}
 
 # Print informational message only in verbose mode
 info() {
-  if [ "$DOCKER_BOOSTER_VERBOSE" -eq 1 ]; then
+  # Compare as a string: DOCKER_BOOSTER_VERBOSE is a flag, and a non-numeric
+  # value (e.g. "true") must not make `[ ... -eq 1 ]` emit a shell error.
+  if [ "$DOCKER_BOOSTER_VERBOSE" = 1 ]; then
     >&2 echo "$@"
   fi
 }
@@ -221,7 +228,14 @@ if [ x"${myname}" = x"user-command" ]; then
     OLD_IFS="$IFS"
     IFS=','
     for var in $DOCKER_PRESERVE_ENV; do
-      eval "val=\$$var"          # assignment RHS is not word-split, so IFS=',' is safe here
+      # Only dereference well-formed variable names. The list is normally built
+      # from validated names, but a command-line `-e 'name;cmd=val'` could carry
+      # shell metacharacters this far, so reject anything that is not a plain
+      # NAME here at the eval sink rather than executing it.
+      case $var in
+        '' | [!A-Za-z_]* | *[!A-Za-z0-9_]* ) continue ;;
+      esac
+      eval "val=\$$var"          # name validated above; RHS is not word-split, so IFS=',' is safe here
       set -- "$var=$val" "$@"    # order among independent env assignments does not matter
     done
     IFS="$OLD_IFS"
@@ -343,6 +357,16 @@ host_tar() {
 real_self=$(host_realpath_no_symlinks "$0")
 dir=$(dirname "${real_self}")
 tag=$(basename "$dir")
+
+# The image tag is the container directory name, so it must be a valid Docker
+# image reference. Fail early with an actionable message instead of letting
+# `docker build` emit a cryptic "repository name must be lowercase" error.
+if [[ ! "$tag" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+  >&2 echo "ERROR: container directory name '${tag}' is not a valid Docker image name."
+  >&2 echo "       Docker image names must be lowercase and match [a-z0-9][a-z0-9._-]*."
+  >&2 echo "       Rename the directory (e.g. all-lowercase, no spaces) and try again."
+  exit 1
+fi
 
 # Parse command-line options meant for docker.
 # Args are accumulated into bash arrays (not strings) so values containing
@@ -699,8 +723,9 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
 
   # Parse platform tag from Dockerfile
   BUILD_PLATFORM=""
-  HTTP_SERVERS=""
   HTTP_SERVER_PIDS=""
+  HTTP_PORT_FILES=""
+  HTTP_SERVER_SCRIPT=""
   BUILD_ARGS=()
   BUILD_CONTEXT_ARGS=()
 
@@ -748,30 +773,36 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
       BUILD_CONTEXT_ARGS+=(--build-context "${CONTEXT_NAME}=${RESOLVED_CONTEXT_VALUE}")
     done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*context:[[:space:]]*' || true)
 
-    # Parse http.static directives and start HTTP servers
+    # Cleanup for HTTP servers, their per-server port files, and the shared
+    # server script. Defined (and the trap armed) before any server starts so
+    # an early exit mid-setup still tears everything down. Safe to call when
+    # nothing was started (all variables default to empty).
+    cleanup_http_servers() {
+      if [ -n "$HTTP_SERVER_PIDS" ]; then
+        >&2 echo "Stopping HTTP servers..."
+        for pid in $HTTP_SERVER_PIDS; do
+          kill $pid 2>/dev/null || true
+        done
+      fi
+      for _pf in $HTTP_PORT_FILES; do
+        rm -f "$_pf"
+      done
+      # Use an `if` (not `&&`) so an empty script path does not make this
+      # function return non-zero - it is called directly under `set -e`.
+      if [ -n "$HTTP_SERVER_SCRIPT" ]; then
+        rm -f "$HTTP_SERVER_SCRIPT"
+      fi
+    }
+    trap cleanup_http_servers EXIT INT TERM
+
+    # Parse http.static directives and start one HTTP server per directive.
     HTTP_STATIC_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*http\.static:[[:space:]]*' || true)
     if [ -n "$HTTP_STATIC_LINES" ]; then
-      while IFS= read -r http_line; do
-        # Parse: #http.static: KEY=/path/to/dir
-        HTTP_SPEC=$(echo "$http_line" | sed -E 's/^#[[:space:]]*http\.static:[[:space:]]*//')
-        HTTP_KEY=$(echo "$HTTP_SPEC" | cut -d= -f1)
-        HTTP_PATH=$(echo "$HTTP_SPEC" | cut -d= -f2-)
-
-        # Resolve relative paths against Dockerfile directory
-        case "$HTTP_PATH" in
-          /*) ;;  # absolute path - use as-is
-          *) HTTP_PATH="$dir/$HTTP_PATH" ;;  # relative path - resolve from Dockerfile dir
-        esac
-
-        if [ ! -d "$HTTP_PATH" ]; then
-          >&2 echo "ERROR: http.static path does not exist: $HTTP_PATH"
-          exit 1
-        fi
-
-        # Start HTTP server on random port using Python script
-        HTTP_SERVER_SCRIPT=$(mktemp)
-        HTTP_PORT_FILE="/tmp/http-server-port-$$.txt"
-        cat > "$HTTP_SERVER_SCRIPT" <<PYEOF
+      # The server script is identical for every directive, so create it once
+      # and reuse it; cleanup removes it. (A previous per-iteration mktemp
+      # leaked, because the cleanup glob never matched the mktemp name.)
+      HTTP_SERVER_SCRIPT=$(mktemp)
+      cat > "$HTTP_SERVER_SCRIPT" <<'PYEOF'
 import http.server
 import socketserver
 import sys
@@ -789,15 +820,42 @@ with socketserver.TCPServer(("", 0), Handler) as httpd:
     httpd.serve_forever()
 PYEOF
 
+      HTTP_SERVER_INDEX=0
+      while IFS= read -r http_line; do
+        # Parse: #http.static: KEY=/path/to/dir
+        HTTP_SPEC=$(echo "$http_line" | sed -E 's/^#[[:space:]]*http\.static:[[:space:]]*//')
+        HTTP_KEY=$(echo "$HTTP_SPEC" | cut -d= -f1)
+        HTTP_PATH=$(echo "$HTTP_SPEC" | cut -d= -f2-)
+
+        # Resolve relative paths against Dockerfile directory
+        case "$HTTP_PATH" in
+          /*) ;;  # absolute path - use as-is
+          *) HTTP_PATH="$dir/$HTTP_PATH" ;;  # relative path - resolve from Dockerfile dir
+        esac
+
+        if [ ! -d "$HTTP_PATH" ]; then
+          >&2 echo "ERROR: http.static path does not exist: $HTTP_PATH"
+          exit 1
+        fi
+
+        # Each server gets its OWN port file. A shared file let the next
+        # directive read the previous server's (stale) port before this server
+        # had written its own, mapping the wrong directory to its build-arg.
+        HTTP_SERVER_INDEX=$((HTTP_SERVER_INDEX + 1))
+        HTTP_PORT_FILE="/tmp/docker-booster-http-port-$$-${HTTP_SERVER_INDEX}.txt"
+        rm -f "$HTTP_PORT_FILE"
+        HTTP_PORT_FILES="$HTTP_PORT_FILES $HTTP_PORT_FILE"
+
         cd "$HTTP_PATH"
         python3 "$HTTP_SERVER_SCRIPT" "$HTTP_PATH" "$HTTP_PORT_FILE" 2>/dev/null &
         SERVER_PID=$!
         HTTP_SERVER_PIDS="$HTTP_SERVER_PIDS $SERVER_PID"
 
-        # Wait for server to start and get port
+        # Wait for THIS server to publish its port (-s: file exists and is
+        # non-empty, so we never read a half-written port).
         SERVER_PORT=""
         for i in 1 2 3 4 5 6 7 8 9 10; do
-          if [ -f "$HTTP_PORT_FILE" ]; then
+          if [ -s "$HTTP_PORT_FILE" ]; then
             SERVER_PORT=$(cat "$HTTP_PORT_FILE")
             break
           fi
@@ -805,9 +863,8 @@ PYEOF
         done
 
         if [ -z "$SERVER_PORT" ]; then
+          # The EXIT trap (armed above) stops servers and removes temp files.
           >&2 echo "ERROR: Failed to start HTTP server for $HTTP_KEY"
-          kill $SERVER_PID 2>/dev/null || true
-          rm -f "$HTTP_SERVER_SCRIPT"
           exit 1
         fi
 
@@ -840,19 +897,6 @@ PYEOF
 $HTTP_STATIC_LINES
 EOF
     fi
-
-    # Cleanup function for HTTP servers
-    cleanup_http_servers() {
-      if [ -n "$HTTP_SERVER_PIDS" ]; then
-        >&2 echo "Stopping HTTP servers..."
-        for pid in $HTTP_SERVER_PIDS; do
-          kill $pid 2>/dev/null || true
-        done
-        rm -f /tmp/http-server-port-$$.txt
-        rm -f /tmp/http-server-*.py 2>/dev/null || true
-      fi
-    }
-    trap cleanup_http_servers EXIT INT TERM
 
     # Build docker image with collected options. Assembled as an array and
     # invoked directly (no eval), so paths/values are passed verbatim.
@@ -1002,15 +1046,31 @@ fi
 PRESERVE_ENV_ARG=()
 ENV_VARS=""
 if [ -f "$dir/Dockerfile" ]; then
-  # Get line number of last FROM, then extract ENV lines after it
+  # Get line number of last FROM, then extract ENV var names after it.
   LAST_FROM=$(grep -n '^FROM' "$dir/Dockerfile" | tail -1 | cut -d: -f1)
   if [ -n "$LAST_FROM" ]; then
-    # Extract ENV var names (handles both "ENV FOO=bar" and "ENV FOO bar" syntax)
-    ENV_VARS=$(tail -n +$LAST_FROM "$dir/Dockerfile" | \
-      grep -E '^[[:space:]]*ENV[[:space:]]+' | \
-      sed -E 's/^[[:space:]]*ENV[[:space:]]+//' | \
-      sed -E 's/^([A-Za-z_][A-Za-z0-9_]*)[= ].*/\1/' | \
-      tr '\n' ',' | sed 's/,$//')
+    # Handle both ENV forms, emitting EVERY name (not just the first):
+    #   ENV k=v [k2=v2 ...]   -> one name per whitespace-separated key=value field
+    #   ENV key value...      -> a single name (legacy form; value is the rest)
+    # A '=' inside a value stays within its own field, so it is not mistaken for
+    # another name. Quoted values containing whitespace are only best-effort and
+    # line-continuations are not joined (see CLAUDE.md).
+    ENV_VARS=$(tail -n +"$LAST_FROM" "$dir/Dockerfile" | awk '
+      /^[[:space:]]*ENV[[:space:]]+/ {
+        line = $0
+        sub(/^[[:space:]]*ENV[[:space:]]+/, "", line)
+        n = split(line, f, /[[:space:]]+/)
+        if (index(line, "=") == 0) {
+          if (f[1] ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print f[1]
+        } else {
+          for (i = 1; i <= n; i++) {
+            if (match(f[i], /^[A-Za-z_][A-Za-z0-9_]*=/)) {
+              print substr(f[i], 1, RLENGTH - 1)
+            }
+          }
+        }
+      }
+    ' | tr '\n' ',' | sed 's/,$//')
   fi
 fi
 # Combine Dockerfile ENV vars with command-line and #option: env vars
@@ -1039,7 +1099,7 @@ trap cleanup_copy_home EXIT INT TERM
 # every path/value is quoted, so spaces and glob characters are passed verbatim.
 # "$@" (not $*) preserves the user command's argument boundaries.
 exec docker run --rm -i "${TFLAG[@]}" \
-  -v "${real_self}:/bin/user-command" \
+  -v "${real_self}:/bin/user-command:ro" \
   -v "$MDIR:$MDIR" \
   "${COPY_HOME_VARG[@]}" \
   "${USERMOUNT_VARGS[@]}" \

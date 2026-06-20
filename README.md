@@ -31,7 +31,7 @@ Follow these steps
    EOF
    ```
 
-2. **Add docker-booster** as a submodule to your project:
+2. **Add docker-booster** as a submodule to your project (if your project is not a git repository yet, run `git init` first):
    <!-- readme-sample: quickstart-02-add-docker-booster -->
    ```bash
    git submodule add https://github.com/Trenz-Electronic/docker-booster.git docker-booster
