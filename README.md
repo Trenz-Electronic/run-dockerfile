@@ -5,13 +5,13 @@
 
 A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone docker command lines by automating user mapping, volume mounts, image rebuilds, and more. When your workflow requires multiple tools with conflicting OS or library dependencies, this is exactly where docker-booster shines.
 
-Here is a complete list of stumbling blocks swiftly overcome by using docker-booster:
+docker-booster handles the common setup work for containerized development:
 - **User/group mapping** - No more permission headaches with mounted volumes
 - **Volume mounting** - Your project files are automatically available
 - **Image management** - Containers are built and rebuilt automatically as needed
 - **TTY handling** - Interactive sessions just work
-- **Common options** - Do not type them every time, tuck them away in the Dockerfile
-- **Cross-compiling complications** - Build successfully on first try with native compilers and zero effort
+- **Common options** - Keep repeated Docker options in the Dockerfile
+- **Cross-compiling complications** - Use native compilers for the target architecture through Docker platform selection
 - **Large source files outside build context** - Easily incorporated into your Dockerfile
 
 ## Quick Start
@@ -37,9 +37,9 @@ Follow these steps
    ```bash
    cd containers/my-container && ln -s ../../docker-booster/build-and-run run
    ```
-   This is the crucial step. The docker-booster follows this link back to your docker context directory in order to be able to perform its automation magic.
+   This is the crucial step. docker-booster follows this link back to your Docker context directory.
 
-4. **Reap the benefits** by running commands inside the container with no command line wizardry:
+4. **Run commands** inside the container without long Docker command lines:
    ```bash
    # verify that the local directory is mapped by listing the files
    ./containers/my-container/run ls -l .
@@ -51,11 +51,9 @@ Follow these steps
    ./containers/my-container/run make -j$(nproc)
    ```
 
-The image will be built automatically on the first run and rebuilt upon Dockerfile changes, get accustomed to it.
+The image is built automatically on the first run and rebuilt when the Dockerfile's build context changes.
 
 **Important:** Create your container directories in your project (not inside the `docker-booster/` submodule) so they can be version-controlled with your code.
-
-You are starting to see, it is everything a lazy developer can wish for.
 
 ## Docker options on the command line
 
@@ -80,7 +78,7 @@ Pass docker run options directly on the command line:
 - `-m`/`--memory` - Memory limit
 - `--gpus` - GPU access
 - `--name` - Container name
-- `--privileged`, `--read-only` - Boolean flags
+- `--privileged`, `--read-only` - Supported boolean flags
 
 Important: only the above listed options are supported on the command line.
 
@@ -90,6 +88,8 @@ Important: only the above listed options are supported on the command line.
 ## Dockerfile Directives
 
 docker-booster extends Dockerfiles with special comment directives.
+
+All docker-booster directives must appear in the first 20 lines of the Dockerfile. Both `#directive:` and `# directive:` forms are accepted; examples below use the project's conventional spelling for each directive.
 
 ### Docker options in the Dockerfile
 
@@ -104,13 +104,14 @@ FROM ubuntu:22.04
 
 ### Fine-tune volume mapping
 
-The default behaviour of docker-booster is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behaviour corresponds to the directive "#mount: .git pwd" and it is already pretty sensible.
+The default behaviour of docker-booster is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behaviour corresponds to `#mount: .git pwd`.
 
-The directive "#mount" accepts a list of one of the following:
+The `#mount:` directive accepts whitespace-separated keywords:
 - `.git` - Root of the git repository (searches upward from current directory)
 - `pwd` - Current working directory
 - `home` - Home directory, do not use with untrusted containers
-The list is searched and the first available directory will be mounted; if none are available, it will exit with error.
+
+The keywords are tried in order and the first available directory is mounted; if none are available, docker-booster exits with an error.
 
 **Example**: Restrict container to git repository only, to avoid any security lapses:
 ```dockerfile
@@ -119,7 +120,7 @@ FROM ubuntu:22.04
 # Only git repo is mounted, not entire $HOME
 ```
 
-Multiple #mount directives are also supported. Duplicates detected will be silently skipped.
+Multiple `#mount:` directives are also supported. They are accumulated in file order.
 
 ### Select the files to be in your home directory
 
@@ -162,7 +163,7 @@ This is useful when you need persistent storage for specific directories without
 
 ### Platform Selection
 
-Specify the target platform in the first 10 lines:
+Specify the target platform in the first 20 lines:
 
 ```dockerfile
 # platform: arm64
@@ -182,11 +183,10 @@ Serve local directories via HTTP during image builds (useful for large installer
 FROM ubuntu:22.04
 
 ARG HTTP_INSTALLER
-# note the cleanup step - the purpose of this is to keep the docker layers small.
 RUN wget ${HTTP_INSTALLER}/large-sdk-installer.run && sh ./large-sdk-installer.run && rm ./large-sdk-installer.run
 ```
 
-**Note:** Relative paths are resolved from the Dockerfile's directory. The directory must exist before build.
+**Note:** Relative paths are resolved from the Dockerfile's directory. The directory must exist before build. Declare `ARG HTTP_<KEY>` after `FROM` before using the generated URL; for `#http.static: INSTALLER=...`, declare `ARG HTTP_INSTALLER`.
 
 The script automatically:
 - Starts a temporary HTTP server on a random port
@@ -236,6 +236,7 @@ docker-booster can run X11 applications with minimal configuration:
 # X11 Application Container
 #copy.home: .Xauthority
 #option: -e DISPLAY
+#option: -v /tmp/.X11-unix:/tmp/.X11-unix
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y \
@@ -243,8 +244,6 @@ RUN apt-get update && apt-get install -y \
     freecad \
     kicad \
     && rm -rf /var/lib/apt/lists/*
-
-# FreeCAD alone installs ~150 packages and 500MB of dependencies!
 ```
 
 Usage:
@@ -260,6 +259,8 @@ Usage:
 ```
 
 **Why `#copy.home: .Xauthority`?** This securely copies only the X11 authentication file instead of mounting your entire home directory, following the principle of least privilege.
+
+On Linux, X11 typically also requires forwarding `DISPLAY` and mounting `/tmp/.X11-unix` as shown above. Some setups instead require `--network host`, a remote X server, or Docker Desktop-specific display configuration.
 
 ## Project Structure
 
@@ -305,11 +306,11 @@ As long as symlinks in your docker containers point to your docker-booster/build
 - Preserves your working directory inside the container
 - Auto-detects TTY for interactive sessions
 - Enables Docker BuildKit by default (set `DOCKER_BUILDKIT=0` to opt out unless using `#context:`); `RUN --mount`, cache mounts, build secrets, and named contexts work out of the box
-- Automatically rebuilds the image when detecting changes to Dockerfile and build context using the hash stored as a label in the Docker image
+- Automatically rebuilds the image when detecting changes in the Dockerfile's build context directory using the hash stored as a label in the Docker image. Mounted files outside that context do not trigger rebuilds by themselves.
 
 ## Security Considerations
 
-docker-booster is **secure by default**:
+docker-booster has **secure defaults for trusted Dockerfiles**:
 
 - ✅ No $HOME exposure - SSH keys, GPG keys, AWS credentials stay protected
 - ✅ Git-aware - automatically mounts only your repository root
@@ -330,13 +331,13 @@ FROM ubuntu:22.04
 FROM ubuntu:22.04
 ```
 
-The default behavior makes docker-booster safe for CI/CD pipelines without any configuration: nothing outside the project directory is exposed to the container.
+The default behavior helps avoid accidental host exposure in CI/CD pipelines: nothing outside the project directory is exposed to the container unless a trusted Dockerfile or command line explicitly asks for it.
 
 **Trust model:** docker-booster is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#option:` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#usermount:` creates directories on the host, and `#copy.home:` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
 
 ## Testing
 
-Run `tests/run --all` to execute the test suite. See `CLAUDE.md` for details.
+Run `tests/run --all` to execute the test suite. See `CLAUDE.md` for maintainer notes.
 
 ## License
 

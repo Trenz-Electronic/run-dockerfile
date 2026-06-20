@@ -41,7 +41,7 @@
 #   ./my-container/run python3 script.py      # Run Python script
 #
 # PLATFORM SUPPORT:
-# Add a platform comment in the first 10 lines of your Dockerfile:
+# Add a platform comment in the first 20 lines of your Dockerfile:
 #   # platform: arm64     # For ARM64/aarch64
 #   # platform: amd64     # For x86_64
 #
@@ -484,7 +484,7 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --privileged|--read-only)
-      # Boolean flags
+      # Supported boolean flags
       CMDLINE_DOCKER_ARGS+=("$1")
       shift
       ;;
@@ -500,6 +500,26 @@ while [ $# -gt 0 ]; do
 done
 # Remove leading comma from CMDLINE_ENV_VARS
 CMDLINE_ENV_VARS=$(echo "$CMDLINE_ENV_VARS" | sed 's/^,//')
+
+# Validate that known docker-booster directives are not hidden below the parse
+# window. Silently ignoring a late directive would make the Dockerfile misleading.
+if [ -f "$dir/Dockerfile" ]; then
+  MISPLACED_DIRECTIVE=$(awk '
+    NR > 20 && /^[[:space:]]*#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):[[:space:]]*/ {
+      directive = $0
+      sub(/^[[:space:]]*#[[:space:]]*/, "", directive)
+      sub(/:.*/, "", directive)
+      print NR ":#" directive ":"
+      exit
+    }
+  ' "$dir/Dockerfile")
+  if [ -n "$MISPLACED_DIRECTIVE" ]; then
+    directive_line=${MISPLACED_DIRECTIVE%%:*}
+    directive_name=${MISPLACED_DIRECTIVE#*:}
+    >&2 echo "ERROR: docker-booster directive '${directive_name}' found on line ${directive_line}; directives must appear in the first 20 lines of Dockerfile"
+    exit 1
+  fi
+fi
 
 # Parse #mount:, #copy.home:, and #usermount: directives from Dockerfile
 MOUNT_KEYWORDS=""
@@ -685,7 +705,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
   BUILD_CONTEXT_ARGS=()
 
   if [ -f "$dir/Dockerfile" ]; then
-    PLATFORM_LINE=$(head -n 10 "$dir/Dockerfile" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
+    PLATFORM_LINE=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
     if [ -n "$PLATFORM_LINE" ]; then
       BUILD_PLATFORM=$(echo "$PLATFORM_LINE" | sed -E 's/^#[[:space:]]*platform:[[:space:]]*([^[:space:]]+).*/\1/')
       >&2 echo "Found platform tag in Dockerfile: ${BUILD_PLATFORM}"

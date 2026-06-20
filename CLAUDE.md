@@ -22,7 +22,7 @@ The script parses special comment directives from Dockerfiles:
 
 | Directive | Location | Purpose |
 |-----------|----------|---------|
-| `# platform: <arch>` | First 10 lines | Cross-platform builds (arm64, amd64) |
+| `# platform: <arch>` | First 20 lines | Cross-platform builds (arm64, amd64) |
 | `#mount: .git pwd home` | First 20 lines | Control volume mounting with FIRST-found semantics |
 | `#copy.home: <file>` | First 20 lines | Copy specific files from $HOME into container |
 | `#usermount: <path>` | First 20 lines | Mount directories with env var expansion (creates if missing) |
@@ -35,10 +35,11 @@ The script parses special comment directives from Dockerfiles:
 - `#mount:` accepts keywords: `.git` (git repo root), `pwd` (current directory), `home` (home directory)
 - FIRST-found semantics: checks keywords in order, uses first match
 - Multiple `#mount:` directives accumulate keywords
+- Known docker-booster directives after line 20 are an error rather than silently ignored.
 - `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data. Like `#usermount:`, it takes **exactly one path per directive line** (trimmed, parsed into a bash array), so filenames may contain spaces; use multiple `#copy.home:` lines for multiple files. After extraction, ownership is fixed **only** on the copied entries and the parent directories leading to them (driven by `tar tzf`, walking each member's ancestors) — never a recursive `chown -R` over `$HOME`, which could re-own a bind-mounted host home (`#mount: home`, or simply the project dir that usually lives under `$HOME`).
 - `#usermount:` takes **exactly one path per directive line** (the whole value after the colon, trimmed), so paths may contain spaces. Use multiple `#usermount:` lines for multiple paths — they accumulate. (Unlike `#mount:`, which whitespace-splits its keywords, the value is *not* split into several entries.)
 - `#context:` is build-time only and maps directly to Docker BuildKit named contexts: `#context: name=value` becomes `docker build --build-context name=value`. Multiple directives accumulate. The parser splits only on the first `=`, trims outer whitespace around the name and value, validates only the name (`[a-z_][a-z0-9_.-]*`), and passes the value through a bash array without shell evaluation. Local values resolve from the Dockerfile directory: absolute paths stay absolute; `./`, `../`, and bare relative paths are resolved against that directory and must exist before build. Values that look like URI/special forms (`scheme://...`, `target:...`, Git-style `user@host:path`) pass through unchanged. Named contexts require BuildKit, so `DOCKER_BUILDKIT=0` plus any `#context:` directive fails before `docker build`.
-- **Default behavior** (no `#mount:` directive): Try `.git` first, fall back to `pwd` (secure by default, no $HOME exposure)
+- **Default behavior** (no `#mount:` directive): Try `.git` first, fall back to `pwd` (no default $HOME exposure)
 
 **ENV Preservation**: `ENV` vars defined in the Dockerfile (after the last `FROM`) are automatically preserved across `su` inside the container.
 
@@ -156,3 +157,4 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0025_copy_home_chown_scope` - Tests `#copy.home:` ownership fix is scoped to copied entries (a root-owned decoy in `$HOME` keeps its ownership; no recursive `chown -R`)
 - `0026_user_mapping_uid_conflict` - Tests an image user with the host's username but a different UID is not reused; container runs with the host UID/GID
 - `0027_context_directive` - Tests `#context:` named contexts (local path with spaces, no auto-rebuild on named-context-only changes, forced rebuild, missing path error, pass-through image context, invalid name)
+- `0028_directive_location` - Tests known docker-booster directives after line 20 fail with a clear error instead of being silently ignored
