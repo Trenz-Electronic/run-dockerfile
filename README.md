@@ -337,7 +337,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 
 ## Technical Details
 
-- Creates a temporary user inside the container matching your host UID/GID; group names are preserved best-effort when they do not conflict with image group lookup
+- Creates a temporary user inside the container matching your host UID/GID; conflicting image user/group names get deterministic fallback names such as `${name}_${id}` and `${name}_${id}_a`
 - Uses `su` for privilege de-escalation (no sudo requirement)
 - Optionally configures sudoers with `#sudo: all` directive
 - Preserves your working directory inside the container

@@ -157,6 +157,74 @@ if [ x"${myname}" = x"user-command" ]; then
     return 1
   }
 
+  choose_passwd_identity_name() {
+    _cpin_base=$1
+    _cpin_uid=$2
+    _cpin_gid=$3
+    _cpin_letters="abcdefghijklmnopqrstuvwxyz"
+    _cpin_i=0
+
+    while [ "$_cpin_i" -le 26 ]; do
+      if [ "$_cpin_i" -eq 0 ]; then
+        _cpin_name=$_cpin_base
+      else
+        _cpin_letter=$(printf '%s' "$_cpin_letters" | cut -c "$_cpin_i")
+        _cpin_name="${_cpin_base}_${_cpin_letter}"
+      fi
+
+      _cpin_entry=$(lookup_colon_entry /etc/passwd "$_cpin_name" || true)
+      if [ -z "$_cpin_entry" ]; then
+        printf '%s\n' "$_cpin_name"
+        return 0
+      fi
+
+      _cpin_existing_uid=$(echo "$_cpin_entry" | cut -d: -f3)
+      _cpin_existing_gid=$(echo "$_cpin_entry" | cut -d: -f4)
+      if [ "$_cpin_existing_uid" = "$_cpin_uid" ] && [ "$_cpin_existing_gid" = "$_cpin_gid" ]; then
+        printf '%s\n' "$_cpin_name"
+        return 0
+      fi
+
+      _cpin_i=$((_cpin_i + 1))
+    done
+
+    >&2 echo "ERROR: could not find a free container username for host uid/gid ${_cpin_uid}:${_cpin_gid} using base '${_cpin_base}'"
+    return 1
+  }
+
+  choose_group_identity_name() {
+    _cgin_base=$1
+    _cgin_gid=$2
+    _cgin_letters="abcdefghijklmnopqrstuvwxyz"
+    _cgin_i=0
+
+    while [ "$_cgin_i" -le 26 ]; do
+      if [ "$_cgin_i" -eq 0 ]; then
+        _cgin_name=$_cgin_base
+      else
+        _cgin_letter=$(printf '%s' "$_cgin_letters" | cut -c "$_cgin_i")
+        _cgin_name="${_cgin_base}_${_cgin_letter}"
+      fi
+
+      _cgin_entry=$(lookup_colon_entry /etc/group "$_cgin_name" || true)
+      if [ -z "$_cgin_entry" ]; then
+        printf '%s\n' "$_cgin_name"
+        return 0
+      fi
+
+      _cgin_existing_gid=$(echo "$_cgin_entry" | cut -d: -f3)
+      if [ "$_cgin_existing_gid" = "$_cgin_gid" ]; then
+        printf '%s\n' "$_cgin_name"
+        return 0
+      fi
+
+      _cgin_i=$((_cgin_i + 1))
+    done
+
+    >&2 echo "ERROR: could not find a free container group name for host gid ${_cgin_gid} using base '${_cgin_base}'"
+    return 1
+  }
+
   # Add ourselves to the system. The user we will actually su to is RUN_USER.
   #
   # Reuse the image's existing user ONLY if it already matches the host identity
@@ -172,7 +240,7 @@ if [ x"${myname}" = x"user-command" ]; then
     EXISTING_UID=$(echo "$EXISTING_PASSWD" | cut -d: -f3)
     EXISTING_GID=$(echo "$EXISTING_PASSWD" | cut -d: -f4)
     if [ "$EXISTING_UID" != "$USERID" ] || [ "$EXISTING_GID" != "$GROUPID" ]; then
-      RUN_USER="${USER}_${USERID}"
+      RUN_USER=$(choose_passwd_identity_name "${USER}_${USERID}" "$USERID" "$GROUPID") || exit 1
       if ! lookup_colon_entry /etc/passwd "$RUN_USER" >/dev/null; then
         echo "$RUN_USER:*:$USERID:$GROUPID:Docker runner:$HOME:/bin/bash" >> /etc/passwd
       fi
@@ -193,7 +261,7 @@ if [ x"${myname}" = x"user-command" ]; then
     EXISTING_GID=$(lookup_colon_entry /etc/group "$GROUPNAME" | cut -d: -f3)
     if [ "$EXISTING_GID" != "$GROUPID" ]; then
       # GID conflict, use alternate name
-      GROUPNAME="${GROUPNAME}_$GROUPID"
+      GROUPNAME=$(choose_group_identity_name "${GROUPNAME}_$GROUPID" "$GROUPID") || exit 1
       if ! lookup_colon_entry /etc/group "$GROUPNAME" >/dev/null; then
         echo "$GROUPNAME::$GROUPID::" >> /etc/group
       fi
