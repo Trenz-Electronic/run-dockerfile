@@ -19,12 +19,20 @@ docker-booster handles the common setup work for containerized development:
 Follow these steps
 
 1. **Create a container directory** with your desired name and Dockerfile
+   <!-- readme-sample: quickstart-01-create-container -->
    ```bash
    mkdir -p containers/my-container
-   echo 'FROM ubuntu:22.04' > containers/my-container/Dockerfile
+   cat > containers/my-container/Dockerfile <<'EOF'
+   FROM buildpack-deps:bookworm
+   EOF
+   cat > Makefile <<'EOF'
+   all:
+   	@echo "README example build"
+   EOF
    ```
 
 2. **Add docker-booster** as a submodule to your project:
+   <!-- readme-sample: quickstart-02-add-docker-booster -->
    ```bash
    git submodule add https://github.com/Trenz-Electronic/docker-booster.git docker-booster
    ```
@@ -34,12 +42,14 @@ Follow these steps
    ```
 
 3. **Create a symlink** to the build-and-run script:
+   <!-- readme-sample: quickstart-03-create-run-symlink -->
    ```bash
    (cd containers/my-container && ln -s ../../docker-booster/build-and-run run)
    ```
    This is the crucial step. docker-booster follows this link back to your Docker context directory.
 
 4. **Run commands** inside the container without long Docker command lines:
+   <!-- readme-sample: quickstart-04-run-commands -->
    ```bash
    # verify that the local directory is mapped by listing the files
    ./containers/my-container/run ls -l .
