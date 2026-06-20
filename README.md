@@ -16,7 +16,7 @@ docker-booster handles the common setup work for containerized development:
 
 ## Quick Start
 
-Follow these steps
+Follow these steps:
 
 1. **Create a container directory** with your desired name and Dockerfile
    <!-- readme-sample: quickstart-01-create-container -->
@@ -30,6 +30,7 @@ Follow these steps
    	@echo "README example build"
    EOF
    ```
+   The root `Makefile` is just a stand-in build target so the `make` command in step 4 has something to run — replace it with your real project.
 
 2. **Add docker-booster** as a submodule to your project (if your project is not a git repository yet, run `git init` first):
    <!-- readme-sample: quickstart-02-add-docker-booster -->
@@ -91,7 +92,7 @@ Pass docker run options directly on the command line:
 - `--name` - Container name
 - `--privileged`, `--read-only` - Supported boolean flags
 
-Important: only the above listed options are supported on the command line.
+Important: only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option docker-booster does not recognize, put it in the Dockerfile with `#option:` instead.
 
 **Environment variables:**
 - `DOCKER_BOOSTER_VERBOSE=1` - Show informational messages (mount directives, file collection, etc.)
@@ -151,7 +152,7 @@ Multiple `#mount:` directives are also supported. They are accumulated in file o
 
 ### Select the files to be in your home directory
 
-To have files copied over to your home directory in the container, use the "#copy.home:" directive. It takes just a single path to a file relative to your home directory. For multiple files, simply use the directive multiple times.
+To have files copied over to your home directory in the container, use the `#copy.home:` directive. It takes just a single path to a file relative to your home directory. For multiple files, simply use the directive multiple times.
 
 In this example, there are two license files copied over using #copy.home:
 <!-- readme-sample: directive-03-copy-home -->
@@ -169,7 +170,7 @@ The files are collected at **run time**, not build time — the image itself nev
 
 ### Mount specific directories
 
-Use the "#usermount:" directive to mount specific directories into the container. Unlike #mount:, this directive creates the directory if it doesn't exist (as the current user, not root).
+Use the `#usermount:` directive to mount specific directories into the container. Unlike `#mount:`, this directive creates the directory if it doesn't exist (as the current user, not root). Each directory is mounted at the **same path inside the container** as on the host, so `$HOME/.cache/pip` on the host appears at `$HOME/.cache/pip` in the container.
 
 Environment variables are expanded, so you can use $HOME, $PWD, etc.:
 
@@ -225,7 +226,7 @@ The script automatically:
 - Passes the URL as `HTTP_<KEY>` build argument
 - Cleans up the server after build completes
 
-**Caveat:** Changes to files in directories served by `#http.static:` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild.
+**Caveat:** Changes to files in directories served by `#http.static:` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild (the image is tagged with the container directory name — see [Project Structure](#project-structure)).
 
 ### BuildKit Named Contexts
 
@@ -319,6 +320,8 @@ my-project/
 
 As long as symlinks in your docker containers point to your docker-booster/build-and-run script, it works.
 
+**Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); docker-booster checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
+
 ## Requirements
 
 **On the host:**
@@ -342,7 +345,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 - Optionally configures sudoers with `#sudo: all` directive
 - Preserves your working directory inside the container
 - Auto-detects TTY for interactive sessions
-- Enables Docker BuildKit by default (set `DOCKER_BUILDKIT=0` to opt out unless using `#context:`); `RUN --mount`, cache mounts, build secrets, and named contexts work out of the box
+- Always uses Docker BuildKit (the modern build path, the engine default since Docker 23.0); `RUN --mount`, cache mounts, build secrets, and named contexts work out of the box
 - Automatically rebuilds the image when detecting changes in the Dockerfile's build context directory using the hash stored as a label in the Docker image. Mounted files outside that context do not trigger rebuilds by themselves.
 
 ## Security Considerations

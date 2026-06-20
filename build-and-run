@@ -824,12 +824,12 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
       >&2 echo "Found platform tag in Dockerfile: ${BUILD_PLATFORM}"
     fi
 
-    # Enable BuildKit by default - it is the modern Docker build path (the engine
-    # default since Docker 23.0) and is required for `RUN --mount`, cache mounts,
-    # and build secrets. Respect an explicit override so `DOCKER_BUILDKIT=0` still
-    # forces the legacy builder.
-    export DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}"
-    info "Using BuildKit (DOCKER_BUILDKIT=$DOCKER_BUILDKIT)"
+    # Always use BuildKit - it is the modern Docker build path (the engine default
+    # since Docker 23.0) and is required for `RUN --mount`, cache mounts, build
+    # secrets, and named contexts. docker-booster assumes BuildKit is present and
+    # does not support the legacy builder, so force it on unconditionally.
+    export DOCKER_BUILDKIT=1
+    info "Using BuildKit"
 
     # Parse #context: directives into BuildKit named contexts. Values are data:
     # split only on the first '=', trim outer whitespace, never shell-evaluate.
@@ -844,11 +844,6 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
 
       if [[ ! "$CONTEXT_NAME" =~ ^[a-z_][a-z0-9_.-]*$ ]]; then
         >&2 echo "ERROR: invalid #context: name '$CONTEXT_NAME' (expected [a-z_][a-z0-9_.-]*)"
-        exit 1
-      fi
-
-      if [ "$DOCKER_BUILDKIT" = "0" ]; then
-        >&2 echo "ERROR: #context: named contexts require BuildKit; unset DOCKER_BUILDKIT or set DOCKER_BUILDKIT=1"
         exit 1
       fi
 
