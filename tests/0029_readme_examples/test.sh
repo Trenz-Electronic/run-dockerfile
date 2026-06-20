@@ -9,9 +9,12 @@ repo_root="$(cd "$test_dir/../.." && pwd)"
 readme="$repo_root/README.md"
 workspace="${TMPDIR:-/tmp}/docker-booster-readme-$$"
 project="$workspace/project"
+original_home="$HOME"
 
 cleanup() {
-    docker rmi -f my-container >/dev/null 2>&1 || true
+    docker rmi -f my-container build-env readme-option readme-mount readme-copy-home \
+        readme-usermount-env readme-usermount-multiple readme-http-static \
+        readme-context-local readme-sudo >/dev/null 2>&1 || true
     rm -rf "$workspace"
 }
 trap cleanup EXIT INT TERM
@@ -44,6 +47,50 @@ write_sample_script() {
     if [ ! -s "$script_path" ]; then
         echo "FAIL: README sample '$sample_id' was not found or was empty"
         fail=1
+    fi
+}
+
+write_sample_file() {
+    sample_id="$1"
+    file_path="$2"
+    extract_sample "$sample_id" > "$file_path"
+    if [ ! -s "$file_path" ]; then
+        echo "FAIL: README sample '$sample_id' was not found or was empty"
+        fail=1
+    fi
+}
+
+prepare_container_from_sample() {
+    sample_id="$1"
+    container_name="$2"
+    container_dir="$project/containers/$container_name"
+
+    mkdir -p "$container_dir"
+    write_sample_file "$sample_id" "$container_dir/Dockerfile"
+    ln -sf ../../docker-booster/build-and-run "$container_dir/run"
+}
+
+prepare_basic_container() {
+    container_name="$1"
+    container_dir="$project/containers/$container_name"
+
+    mkdir -p "$container_dir"
+    cat > "$container_dir/Dockerfile" <<'EOF'
+FROM buildpack-deps:bookworm
+EOF
+    ln -sf ../../docker-booster/build-and-run "$container_dir/run"
+}
+
+assert_dockerfile_directives_within_first_20() {
+    sample_id="$1"
+    tmp_file="$workspace/${sample_id}.Dockerfile"
+
+    write_sample_file "$sample_id" "$tmp_file"
+    if awk 'NR > 20 && /^[[:space:]]*#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):[[:space:]]*/ { found = 1 } END { exit found ? 0 : 1 }' "$tmp_file"; then
+        echo "FAIL: README sample '$sample_id' has a docker-booster directive after line 20"
+        fail=1
+    else
+        echo "PASS: README sample '$sample_id' keeps directives in the first 20 lines"
     fi
 }
 
@@ -137,6 +184,150 @@ echo "=== Static README checks for known shell-example pitfalls ==="
 assert_readme_contains "(cd containers/my-container && ln -s ../../docker-booster/build-and-run run)"
 assert_readme_contains "./containers/my-container/run sh -lc 'make -j\$(nproc)'"
 assert_readme_not_contains "./containers/my-container/run make -j\$(nproc)"
+
+echo ""
+echo "=== Run command-line option sample ==="
+prepare_basic_container build-env
+write_sample_script options-01-command-line "$workspace/options-01.sh"
+(cd "$project" && sh "$workspace/options-01.sh") || {
+    echo "FAIL: command-line options README sample failed"
+    fail=1
+}
+
+echo ""
+echo "=== Run Dockerfile directive samples ==="
+(cd "$project" && git init >/dev/null 2>&1) || true
+project_real=$(cd "$project" && pwd)
+
+prepare_container_from_sample directive-01-option readme-option
+(cd "$project" && ./containers/readme-option/run true) || {
+    echo "FAIL: #option: README sample failed"
+    fail=1
+}
+
+prepare_container_from_sample directive-02-mount readme-mount
+output=$(cd "$project" && DOCKER_BOOSTER_VERBOSE=1 ./containers/readme-mount/run pwd 2>&1) || {
+    echo "FAIL: #mount: README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -F "Mount directive: Using git root directory ($project_real)" >/dev/null; then
+    echo "PASS: #mount: README sample mounted git root"
+else
+    echo "FAIL: #mount: README sample did not mount git root"
+    echo "Output: $output"
+    fail=1
+fi
+
+home_dir="$workspace/home"
+mkdir -p "$home_dir/.config/my-tool"
+echo "license from README test" > "$home_dir/.license.dat"
+echo "config from README test" > "$home_dir/.config/my-tool/license.json"
+prepare_container_from_sample directive-03-copy-home readme-copy-home
+output=$(cd "$project" && HOME="$home_dir" DOCKER_CONFIG="$original_home/.docker" ./containers/readme-copy-home/run sh -lc 'cat ~/.license.dat && cat ~/.config/my-tool/license.json') || {
+    echo "FAIL: #copy.home: README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -F "license from README test" >/dev/null &&
+   echo "$output" | grep -F "config from README test" >/dev/null; then
+    echo "PASS: #copy.home: README sample copied both files"
+else
+    echo "FAIL: #copy.home: README sample did not copy expected files"
+    echo "Output: $output"
+    fail=1
+fi
+
+prepare_container_from_sample directive-04-usermount-env readme-usermount-env
+output=$(cd "$project" && HOME="$home_dir" DOCKER_CONFIG="$original_home/.docker" ./containers/readme-usermount-env/run sh -lc 'test -d "$HOME/projects/shared-cache" && test -d "$HOME/.local/share/myapp" && echo USERMOUNT_ENV_OK') || {
+    echo "FAIL: #usermount: env README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -F "USERMOUNT_ENV_OK" >/dev/null; then
+    echo "PASS: #usermount: env README sample mounted expected directories"
+else
+    echo "FAIL: #usermount: env README sample did not mount expected directories"
+    echo "Output: $output"
+    fail=1
+fi
+
+prepare_container_from_sample directive-05-usermount-multiple readme-usermount-multiple
+output=$(cd "$project" && HOME="$home_dir" DOCKER_CONFIG="$original_home/.docker" ./containers/readme-usermount-multiple/run sh -lc 'test -d "$HOME/.cache/pip" && test -d "$HOME/.cache/npm" && echo USERMOUNT_MULTI_OK') || {
+    echo "FAIL: #usermount: multiple README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -F "USERMOUNT_MULTI_OK" >/dev/null; then
+    echo "PASS: #usermount: multiple README sample mounted expected directories"
+else
+    echo "FAIL: #usermount: multiple README sample did not mount expected directories"
+    echo "Output: $output"
+    fail=1
+fi
+
+mkdir -p "$project/containers/installers"
+cat > "$project/containers/installers/large-sdk-installer.run" <<'EOF'
+#!/bin/sh
+echo "http static installer ran" > /tmp/http-static-marker
+EOF
+prepare_container_from_sample directive-07-http-static readme-http-static
+output=$(cd "$project" && ./containers/readme-http-static/run cat /tmp/http-static-marker) || {
+    echo "FAIL: #http.static: README sample failed"
+    fail=1
+    output=""
+}
+if [ "$output" = "http static installer ran" ]; then
+    echo "PASS: #http.static: README sample consumed served installer"
+else
+    echo "FAIL: #http.static: README sample produced unexpected output: '$output'"
+    fail=1
+fi
+
+prepare_container_from_sample directive-08-context-local readme-context-local
+output=$(cd "$project" && ./containers/readme-context-local/run cat /tmp/http-static-marker) || {
+    echo "FAIL: local #context: README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -F "http static installer ran" >/dev/null; then
+    echo "PASS: local #context: README sample copied and ran installer"
+else
+    echo "FAIL: local #context: README sample did not run installer"
+    echo "Output: $output"
+    fail=1
+fi
+
+prepare_container_from_sample directive-10-sudo readme-sudo
+output=$(cd "$project" && ./containers/readme-sudo/run sudo id -u) || {
+    echo "FAIL: #sudo: README sample failed"
+    fail=1
+    output=""
+}
+if [ "$output" = "0" ]; then
+    echo "PASS: #sudo: README sample configured passwordless sudo"
+else
+    echo "FAIL: #sudo: README sample returned unexpected output: '$output'"
+    fail=1
+fi
+
+echo ""
+echo "=== Static Dockerfile directive sample checks ==="
+for sample_id in \
+    directive-01-option \
+    directive-02-mount \
+    directive-03-copy-home \
+    directive-04-usermount-env \
+    directive-05-usermount-multiple \
+    directive-06-platform \
+    directive-07-http-static \
+    directive-08-context-local \
+    directive-09-context-remote \
+    directive-10-sudo
+do
+    assert_dockerfile_directives_within_first_20 "$sample_id"
+done
+assert_readme_contains "ARG HTTP_INSTALLER"
 
 if [ "$fail" = 0 ]; then
     echo ""

@@ -69,12 +69,13 @@ The image is built automatically on the first run and rebuilt when the Dockerfil
 
 Pass docker run options directly on the command line:
 
+<!-- readme-sample: options-01-command-line -->
 ```bash
-./containers/build-env/run -e CC=clang make          # Environment variables
-./containers/build-env/run -v /data:/data make       # Volume mounts
-./containers/build-env/run -p 8080:80 nginx          # Port mapping
-./containers/build-env/run --network host curl ...   # Network mode
-./containers/build-env/run --cpus 4 --memory 8g ...  # Resource limits
+./containers/build-env/run -e CC=clang sh -lc 'test "$CC" = clang'  # Environment variables
+./containers/build-env/run -v "$PWD:/project:ro" test -d /project   # Volume mounts
+./containers/build-env/run -p 80 true                               # Port mapping
+./containers/build-env/run --network host true                      # Network mode
+./containers/build-env/run --cpus 1 --memory 512m true              # Resource limits
 ```
 
 **Supported command-line options:**
@@ -105,6 +106,7 @@ All docker-booster directives must appear in the first 20 lines of the Dockerfil
 
 For any options you want to always be present on the command line, but don't bother to type them in every time, use the `#option:` pragma in your Dockerfile:
 
+<!-- readme-sample: directive-01-option -->
 ```dockerfile
 #option: --security-opt seccomp=unconfined
 #option: --cap-add SYS_PTRACE
@@ -124,6 +126,7 @@ The `#mount:` directive accepts whitespace-separated keywords:
 The keywords are tried in order and the first available directory is mounted; if none are available, docker-booster exits with an error.
 
 **Example**: Restrict container to git repository only, to avoid any security lapses:
+<!-- readme-sample: directive-02-mount -->
 ```dockerfile
 #mount: .git
 FROM ubuntu:22.04
@@ -137,6 +140,7 @@ Multiple `#mount:` directives are also supported. They are accumulated in file o
 To have files copied over to your home directory in the container, use the "#copy.home:" directive. It takes just a single path to a file relative to your home directory. For multiple files, simply use the directive multiple times.
 
 In this example, there are two license files copied over using #copy.home:
+<!-- readme-sample: directive-03-copy-home -->
 ```dockerfile
 #copy.home: .license.dat
 #copy.home: .config/my-tool/license.json
@@ -155,6 +159,7 @@ Use the "#usermount:" directive to mount specific directories into the container
 
 Environment variables are expanded, so you can use $HOME, $PWD, etc.:
 
+<!-- readme-sample: directive-04-usermount-env -->
 ```dockerfile
 #usermount: $HOME/projects/shared-cache
 #usermount: $HOME/.local/share/myapp
@@ -163,6 +168,7 @@ FROM ubuntu:22.04
 
 Each `#usermount:` line is a single path (which may contain spaces); use multiple lines for multiple paths:
 
+<!-- readme-sample: directive-05-usermount-multiple -->
 ```dockerfile
 #usermount: $HOME/.cache/pip
 #usermount: $HOME/.cache/npm
@@ -175,6 +181,7 @@ This is useful when you need persistent storage for specific directories without
 
 Specify the target platform in the first 20 lines:
 
+<!-- readme-sample: directive-06-platform -->
 ```dockerfile
 # platform: arm64
 FROM ubuntu:22.04
@@ -188,9 +195,10 @@ This feature is useful when you want to build inside an emulated target-architec
 
 Serve local directories via HTTP during image builds (useful for large installers):
 
+<!-- readme-sample: directive-07-http-static -->
 ```dockerfile
 #http.static: INSTALLER=../installers
-FROM ubuntu:22.04
+FROM buildpack-deps:bookworm
 
 ARG HTTP_INSTALLER
 RUN wget ${HTTP_INSTALLER}/large-sdk-installer.run && sh ./large-sdk-installer.run && rm ./large-sdk-installer.run
@@ -209,6 +217,7 @@ The script automatically:
 
 Pass Docker BuildKit named contexts with `#context:`:
 
+<!-- readme-sample: directive-08-context-local -->
 ```dockerfile
 #context: installer=../installers
 FROM ubuntu:22.04
@@ -219,6 +228,7 @@ RUN sh /tmp/large-sdk-installer.run && rm /tmp/large-sdk-installer.run
 
 Multiple directives are allowed. The context name must match `[a-z_][a-z0-9_.-]*`; context names are lowercase because Docker/BuildKit resolves `COPY --from=<name>` through image-reference-style rules on current Docker versions, and uppercase names can fail before the build with an invalid reference error. The value is passed to `docker build --build-context name=value` without shell evaluation. Local relative paths are resolved from the Dockerfile's directory and must exist before build. Remote, Git, image, and `target:` context values are passed through unchanged, for example:
 
+<!-- readme-sample: directive-09-context-remote -->
 ```dockerfile
 #context: base=docker-image://alpine:latest
 #context: src=https://github.com/org/repo.git
@@ -230,6 +240,7 @@ Multiple directives are allowed. The context name must match `[a-z_][a-z0-9_.-]*
 
 If you need `sudo` access inside the container, use the `#sudo:` directive and make sure sudo has been installed, as in the following example:
 
+<!-- readme-sample: directive-10-sudo -->
 ```dockerfile
 #sudo: all
 FROM ubuntu:22.04
