@@ -1035,22 +1035,29 @@ OPTION_ENV_VARS=""
 if [ -f "$dir/Dockerfile" ]; then
   OPTION_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*option:[[:space:]]*' || true)
   if [ -n "$OPTION_LINES" ]; then
-    # Strip the directive prefix from each line.
-    OPTION_VALUES=$(echo "$OPTION_LINES" | sed -E 's/^#[[:space:]]*option:[[:space:]]*//')
-    # Split each option line into words on whitespace with globbing disabled, so
-    # a value like `-e PATTERN=*.txt` is passed literally and never expanded
-    # against the host filesystem. (`read` does not glob; `set -f` guards the
-    # array assignment. The heredoc expands $OPTION_VALUES exactly once, so a
-    # literal `$DISPLAY` inside an #option value is preserved, not re-expanded.)
-    set -f
+    # Each #option: directive is one docker-run option. Split only once: the
+    # option token itself, then the entire remaining text as that option's value.
+    # This keeps values containing spaces/globs literal without shell evaluation.
     while IFS= read -r _opt_line; do
-      [ -n "$_opt_line" ] || continue
-      # shellcheck disable=SC2206  # intentional word-split; globbing disabled above
-      DOCKER_OPTIONS+=( $_opt_line )
+      _opt_value=$(printf '%s' "$_opt_line" | sed -E 's/^#[[:space:]]*option:[[:space:]]*//; s/[[:space:]]+$//')
+      [ -n "$_opt_value" ] || continue
+
+      _opt_name=${_opt_value%%[[:space:]]*}
+      if [ "$_opt_name" = "$_opt_value" ]; then
+        DOCKER_OPTIONS+=("$_opt_name")
+      else
+        _opt_arg=$(trim_space "${_opt_value#"$_opt_name"}")
+        case "$_opt_name" in
+          --privileged|--read-only)
+            >&2 echo "ERROR: #option: ${_opt_name} does not take a value; use one docker option per #option: line"
+            exit 1
+            ;;
+        esac
+        DOCKER_OPTIONS+=("$_opt_name" "$_opt_arg")
+      fi
     done <<EOF
-$OPTION_VALUES
+$OPTION_LINES
 EOF
-    set +f
     # Extract env var names from -e/--env options for ENV preservation. Walk the
     # parsed token array (not the raw text) so we only match genuine option
     # tokens - never an "-e" substring inside a word like "--entrypoint" - and so

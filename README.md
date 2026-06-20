@@ -114,6 +114,20 @@ For any options you want to always be present on the command line, but don't bot
 FROM ubuntu:22.04
 ```
 
+Each `#option:` line represents one Docker option. If the option has a value,
+write the option name first and the value after the first space; the whole
+remaining value is passed literally, so spaces and glob characters are
+preserved:
+
+```dockerfile
+#option: -v /tmp/my cache:/cache
+#option: -e TOOL_FLAGS=--mode fast
+#option: --mount type=bind,source=/tmp/my cache,target=/cache,readonly
+FROM ubuntu:22.04
+```
+
+Use multiple `#option:` lines for multiple Docker options.
+
 ### Fine-tune volume mapping
 
 The default behaviour of docker-booster is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behaviour corresponds to `#mount: .git pwd`.
