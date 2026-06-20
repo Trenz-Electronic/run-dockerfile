@@ -72,12 +72,14 @@ Pass docker run options directly on the command line:
 
 <!-- readme-sample: options-01-command-line -->
 ```bash
-./containers/build-env/run -e CC=clang sh -lc 'test "$CC" = clang'  # Environment variables
-./containers/build-env/run -v "$PWD:/project:ro" test -d /project   # Volume mounts
-./containers/build-env/run -p 80 true                               # Port mapping
-./containers/build-env/run --network host true                      # Network mode
-./containers/build-env/run --cpus 1 --memory 512m true              # Resource limits
+./containers/my-container/run -e CC=clang sh -lc 'test "$CC" = clang'  # Environment variables
+./containers/my-container/run -v "$PWD:/project:ro" test -d /project   # Volume mounts
+./containers/my-container/run -p 80 true                               # Port mapping
+./containers/my-container/run --network host true                      # Network mode
+./containers/my-container/run --cpus 1 --memory 512m true              # Resource limits
 ```
+
+**Forwarding environment variables:** `-e`/`--env` accepts two forms. `-e NAME=value` sets the variable to a literal value inside the container; `-e NAME` (no `=value`) forwards `NAME`'s *current value from your host environment* — handy for values you would rather not hard-code, such as `-e DISPLAY` for X11. Either way, docker-booster also re-exports the variable across the container's internal `su` privilege drop, so it stays set for your command. The same two forms work in the Dockerfile via [`#option:`](#docker-options-in-the-dockerfile) (`#option: -e NAME=value` and `#option: -e NAME`).
 
 **Supported command-line options:**
 - `-e`/`--env` - Environment variables
@@ -128,6 +130,8 @@ FROM ubuntu:22.04
 ```
 
 Use multiple `#option:` lines for multiple Docker options.
+
+To pass an environment variable, `#option: -e NAME=value` sets a literal value and `#option: -e NAME` (no value) forwards `NAME` from your host environment — both are preserved across the container's internal `su` (see [Forwarding environment variables](#docker-options-on-the-command-line) above).
 
 ### Fine-tune volume mapping
 

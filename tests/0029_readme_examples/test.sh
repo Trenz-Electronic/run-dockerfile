@@ -12,7 +12,7 @@ project="$workspace/project"
 original_home="$HOME"
 
 cleanup() {
-    docker rmi -f my-container build-env readme-option readme-mount readme-copy-home \
+    docker rmi -f my-container readme-option readme-mount readme-copy-home \
         readme-usermount-env readme-usermount-multiple readme-http-static \
         readme-context-local readme-sudo >/dev/null 2>&1 || true
     rm -rf "$workspace"
@@ -187,7 +187,9 @@ assert_readme_not_contains "./containers/my-container/run make -j\$(nproc)"
 
 echo ""
 echo "=== Run command-line option sample ==="
-prepare_basic_container build-env
+# Reuses the my-container image already built by the Quick Start samples above;
+# prepare_basic_container is idempotent (identical Dockerfile, so no rebuild).
+prepare_basic_container my-container
 write_sample_script options-01-command-line "$workspace/options-01.sh"
 (cd "$project" && sh "$workspace/options-01.sh") || {
     echo "FAIL: command-line options README sample failed"
