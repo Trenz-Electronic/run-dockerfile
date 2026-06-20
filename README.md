@@ -377,7 +377,7 @@ FROM ubuntu:22.04
 
 The default behavior helps avoid accidental host exposure in CI/CD pipelines: nothing outside the project directory is exposed to the container unless a trusted Dockerfile or command line explicitly asks for it.
 
-When using `#http.static:`, docker-booster briefly starts a temporary HTTP server on a random host port during the image build. Treat served directories as visible to other users on shared hosts while the build is running; serve only trusted, non-secret files.
+When using `#http.static:`, docker-booster briefly starts a temporary HTTP server on a random host port during the image build and serves files only under a high-entropy temporary URL prefix passed through `HTTP_<KEY>`. Treat that URL as visible to other users who can inspect build arguments or process output while the build is running; serve only trusted, non-secret files.
 
 **Trust model:** docker-booster is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#option:` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#usermount:` creates directories on the host, and `#copy.home:` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
 

@@ -9,4 +9,5 @@ ARG HTTP_BETA
 # marker-a.txt) and this build fails at the BETA curl.
 RUN curl -f ${HTTP_ALPHA}/marker-a.txt -o /tmp/a.txt
 RUN curl -f ${HTTP_BETA}/marker-b.txt -o /tmp/b.txt
+RUN ! curl -fsS ${HTTP_ALPHA%/*}/wrong-token/marker-a.txt -o /tmp/wrong-token.txt
 RUN cat /tmp/a.txt /tmp/b.txt

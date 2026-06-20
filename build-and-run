@@ -949,13 +949,35 @@ import http.server
 import socketserver
 import sys
 import os
+import urllib.parse
 
 serve_dir = sys.argv[1]
 port_file = sys.argv[2]
+token = sys.argv[3]
+
+class TokenHandler(http.server.SimpleHTTPRequestHandler):
+    def translate_path(self, path):
+        parsed = urllib.parse.urlsplit(path)
+        request_path = parsed.path
+        token_prefix = "/" + token
+        if request_path == token_prefix:
+            stripped_path = "/"
+        elif request_path.startswith(token_prefix + "/"):
+            stripped_path = request_path[len(token_prefix):]
+        else:
+            return None
+
+        rebuilt = urllib.parse.urlunsplit(("", "", stripped_path, parsed.query, parsed.fragment))
+        return super().translate_path(rebuilt)
+
+    def send_head(self):
+        if self.translate_path(self.path) is None:
+            self.send_error(404, "File not found")
+            return None
+        return super().send_head()
 
 os.chdir(serve_dir)
-Handler = http.server.SimpleHTTPRequestHandler
-with socketserver.TCPServer(("", 0), Handler) as httpd:
+with socketserver.TCPServer(("", 0), TokenHandler) as httpd:
     port = httpd.server_address[1]
     with open(port_file, 'w') as f:
         f.write(str(port))
@@ -980,6 +1002,12 @@ PYEOF
           exit 1
         fi
 
+        HTTP_TOKEN=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+        if [ "${#HTTP_TOKEN}" -ne 32 ]; then
+          >&2 echo "ERROR: Failed to generate HTTP token for $HTTP_KEY"
+          exit 1
+        fi
+
         # Each server gets its OWN port file. A shared file let the next
         # directive read the previous server's (stale) port before this server
         # had written its own, mapping the wrong directory to its build-arg.
@@ -989,7 +1017,7 @@ PYEOF
         HTTP_PORT_FILES="$HTTP_PORT_FILES $HTTP_PORT_FILE"
 
         cd "$HTTP_PATH"
-        python3 "$HTTP_SERVER_SCRIPT" "$HTTP_PATH" "$HTTP_PORT_FILE" 2>/dev/null &
+        python3 "$HTTP_SERVER_SCRIPT" "$HTTP_PATH" "$HTTP_PORT_FILE" "$HTTP_TOKEN" 2>/dev/null &
         SERVER_PID=$!
         HTTP_SERVER_PIDS="$HTTP_SERVER_PIDS $SERVER_PID"
 
@@ -1030,7 +1058,7 @@ PYEOF
             fi
             ;;
         esac
-        SERVER_URL="http://${HOST_IP}:${SERVER_PORT}"
+        SERVER_URL="http://${HOST_IP}:${SERVER_PORT}/${HTTP_TOKEN}"
         BUILD_ARGS+=(--build-arg "HTTP_${HTTP_KEY}=${SERVER_URL}")
 
         >&2 echo "Started HTTP server for ${HTTP_KEY}: ${SERVER_URL} (PID: ${SERVER_PID})"
