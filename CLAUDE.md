@@ -72,7 +72,7 @@ The script operates in two modes based on `$0`:
 
 User/group mapping preserves host username, UID, and GID. Group-name preservation is best-effort: if the host group name already exists in the container with a different GID, docker-booster creates `${groupname}_${gid}`; if that fallback name also exists with a different GID, it tries `${groupname}_${gid}_a` through `${groupname}_${gid}_z` before failing clearly. If another image group already has the host GID, both group names may share that numeric GID, and reverse lookups such as `id -gn` may report the image's first matching group name. The host user is mapped by **identity, not just name**: the image's existing user is reused only when it matches the host on name, UID *and* primary GID; if the image ships a user with the same name but a different UID/GID, the container instead runs as a distinct user `${username}_${uid}` carrying the host UID/GID (so bind-mounted files stay accessible). If that fallback username also exists with a different UID/GID, docker-booster tries `${username}_${uid}_a` through `${username}_${uid}_z` before failing. The `su` target and any `#sudo:` sudoers entry use this resolved user.
 
-The script bind-mounts **itself** into the container at `/bin/user-command` **read-only** (`-v "${real_self}:/bin/user-command:ro"`). The container starts as root before dropping to the mapped user, so the read-only flag prevents a container from overwriting the host script through that mount. The image tag is the container **directory name**, so it is validated up front against `^[a-z0-9][a-z0-9._-]*$`; an invalid name (e.g. containing uppercase) fails with an actionable message instead of a cryptic `docker build` "repository name must be lowercase" error (regression-tested by `tests/0032` and `tests/0033`).
+The script bind-mounts **itself** into the container at `/bin/user-command` **read-only** (`-v "${real_self}:/bin/user-command:ro"`). The container starts as root before dropping to the mapped user, so the read-only flag prevents a container from overwriting the host script through that mount (regression-tested by `tests/0032`). The image tag is the container **directory name**, so it is validated up front against `^[a-z0-9][a-z0-9._-]*$`; an invalid name (e.g. containing uppercase) fails with an actionable message instead of a cryptic `docker build` "repository name must be lowercase" error (regression-tested by `tests/0033`).
 
 `#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/docker-booster-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
 
@@ -135,7 +135,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 
 ### Test Cases
 
-- `0001_preserve_env` - Tests ENV vars from Dockerfile are preserved across sudo
+- `0001_preserve_env` - Tests ENV vars from Dockerfile are preserved across the internal `su` drop
 - `0002_pragma_platform_aarch64` - Tests `# platform: arm64` runs container on aarch64
 - `0003_pragma_platform_amd64` - Tests `# platform: amd64` runs container on x86_64
 - `0004_pragma_platform_armv7` - Tests `# platform: arm/v7` runs container on armv7l (Zynq, RPi)

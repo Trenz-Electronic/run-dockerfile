@@ -232,8 +232,8 @@ if [ x"${myname}" = x"user-command" ]; then
   # with the same name but a different uid/gid, that name is a different identity,
   # so we must NOT reuse it (su'ing to it would run under the image's uid and break
   # access to bind-mounted host files). In that case run as a distinct, deterministic
-  # user "${USER}_${USERID}" that carries the host uid/gid - mirroring how a group
-  # name clash is handled below.
+  # user based on "${USER}_${USERID}" (retrying with _a.._z on collisions) that
+  # carries the host uid/gid - mirroring how a group name clash is handled below.
   RUN_USER=$USER
   EXISTING_PASSWD=$(lookup_colon_entry /etc/passwd "$USER" || true)
   if [ -n "$EXISTING_PASSWD" ]; then

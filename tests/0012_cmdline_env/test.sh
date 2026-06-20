@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test: Command-line -e/--env options pass env vars and preserve across sudo
+# Test: Command-line -e/--env options pass env vars and preserve across su
 
 set -e
 
