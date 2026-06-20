@@ -460,10 +460,19 @@ fi
 CMDLINE_ENV_ARGS=()
 CMDLINE_ENV_VARS=""
 CMDLINE_DOCKER_ARGS=()
+require_option_value() {
+  _rov_opt=$1
+  _rov_count=$2
+  if [ "$_rov_count" -lt 2 ]; then
+    >&2 echo "ERROR: option '${_rov_opt}' requires a value"
+    exit 1
+  fi
+}
 while [ $# -gt 0 ]; do
   case "$1" in
     -e)
       # -e VAR=val
+      require_option_value "$1" "$#"
       shift
       CMDLINE_ENV_ARGS+=(-e "$1")
       CMDLINE_ENV_VARS="$CMDLINE_ENV_VARS,$(echo "$1" | cut -d= -f1)"
@@ -478,6 +487,7 @@ while [ $# -gt 0 ]; do
       ;;
     --env)
       # --env VAR=val
+      require_option_value "$1" "$#"
       shift
       CMDLINE_ENV_ARGS+=(-e "$1")
       CMDLINE_ENV_VARS="$CMDLINE_ENV_VARS,$(echo "$1" | cut -d= -f1)"
@@ -485,6 +495,7 @@ while [ $# -gt 0 ]; do
       ;;
     -v|--volume)
       # -v /host:/container or --volume /host:/container
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(-v "$1")
       shift
@@ -497,6 +508,7 @@ while [ $# -gt 0 ]; do
       ;;
     -p|--publish)
       # -p 8080:80 or --publish 8080:80
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(-p "$1")
       shift
@@ -509,6 +521,7 @@ while [ $# -gt 0 ]; do
       ;;
     -w|--workdir)
       # -w /path or --workdir /path
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(-w "$1")
       shift
@@ -521,6 +534,7 @@ while [ $# -gt 0 ]; do
       ;;
     --network|--net)
       # --network host or --net host
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(--network "$1")
       shift
@@ -534,6 +548,7 @@ while [ $# -gt 0 ]; do
       ;;
     --device)
       # --device /dev/ttyUSB0
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(--device "$1")
       shift
@@ -546,6 +561,7 @@ while [ $# -gt 0 ]; do
       ;;
     --cpus)
       # --cpus 2
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(--cpus "$1")
       shift
@@ -558,6 +574,7 @@ while [ $# -gt 0 ]; do
       ;;
     -m|--memory)
       # -m 1g or --memory 1g
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(--memory "$1")
       shift
@@ -570,6 +587,7 @@ while [ $# -gt 0 ]; do
       ;;
     --gpus)
       # --gpus all
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(--gpus "$1")
       shift
@@ -582,6 +600,7 @@ while [ $# -gt 0 ]; do
       ;;
     --name)
       # --name mycontainer
+      require_option_value "$1" "$#"
       shift
       CMDLINE_DOCKER_ARGS+=(--name "$1")
       shift
@@ -609,6 +628,12 @@ while [ $# -gt 0 ]; do
 done
 # Remove leading comma from CMDLINE_ENV_VARS
 CMDLINE_ENV_VARS=$(echo "$CMDLINE_ENV_VARS" | sed 's/^,//')
+
+if [ $# -eq 0 ]; then
+  >&2 echo "ERROR: no command specified; no container action was taken."
+  >&2 echo "       Pass a command, for example './run /bin/sh' or './run /bin/bash'."
+  exit 1
+fi
 
 # Validate that known docker-booster directives are not hidden below the parse
 # window. Silently ignoring a late directive would make the Dockerfile misleading.
@@ -934,10 +959,10 @@ PYEOF
         SERVER_PID=$!
         HTTP_SERVER_PIDS="$HTTP_SERVER_PIDS $SERVER_PID"
 
-        # Wait for THIS server to publish its port (-s: file exists and is
-        # non-empty, so we never read a half-written port).
+        # Wait up to 30s for THIS server to publish its port (-s: file exists
+        # and is non-empty, so we never read a half-written port).
         SERVER_PORT=""
-        for i in 1 2 3 4 5 6 7 8 9 10; do
+        for ((i = 1; i <= 60; i++)); do
           if [ -s "$HTTP_PORT_FILE" ]; then
             SERVER_PORT=$(cat "$HTTP_PORT_FILE")
             break

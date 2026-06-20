@@ -74,7 +74,7 @@ User/group mapping preserves host username, UID, and GID. Group-name preservatio
 
 The script bind-mounts **itself** into the container at `/bin/user-command` **read-only** (`-v "${real_self}:/bin/user-command:ro"`). The container starts as root before dropping to the mapped user, so the read-only flag prevents a container from overwriting the host script through that mount (regression-tested by `tests/0032`). The image tag is the container **directory name**, so it is validated up front against `^[a-z0-9][a-z0-9._-]*$`; an invalid name (e.g. containing uppercase) fails with an actionable message instead of a cryptic `docker build` "repository name must be lowercase" error (regression-tested by `tests/0033`).
 
-`#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/docker-booster-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
+`#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/docker-booster-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the host side waits up to 30 seconds for each port file before failing. The shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
 
 The script always enables Docker BuildKit (`export DOCKER_BUILDKIT=1` before `docker build`) — the modern build path (the engine default since Docker 23.0) and a prerequisite for `RUN --mount`, cache mounts, build secrets, and named contexts. docker-booster assumes BuildKit is present and does not support the legacy builder; the override is forced on unconditionally, so a pre-set `DOCKER_BUILDKIT=0` in the environment is ignored.
 
@@ -98,9 +98,9 @@ The script implements hash-based rebuild detection:
 
 ### Verbose Mode
 
-The script is quiet by default, suppressing informational messages during normal operation. Set `DOCKER_BOOSTER_VERBOSE=1` in the environment to enable them.
+The script is quiet by default, suppressing informational messages during normal operation. Set `DOCKER_BOOSTER_VERBOSE=1` in the environment to enable them; only the literal value `1` is treated as enabled.
 
-- `DOCKER_BOOSTER_VERBOSE` environment variable controls verbosity (0=quiet, 1=verbose)
+- `DOCKER_BOOSTER_VERBOSE` environment variable controls verbosity (0=quiet, 1=verbose; other values are quiet)
 - `info()` helper function outputs to stderr only when verbose mode is enabled
 - Messages suppressed by default (runtime info):
   - Mount directive resolution ("Mount directive: Using home/pwd/git directory...")
@@ -174,3 +174,5 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0037_option_inherit_env` - Tests the inherit form `#option: -e VAR` (no `=value`) is added to the ENV-preserve list like the command-line `-e VAR`; the decisive check is a variable unset on the host becoming defined inside the container
 - `0038_option_value_spaces` - Tests `#option:` values containing spaces for `-e`, `-v`, and `--mount`
 - `0039_user_group_fallback_collision` - Tests fallback user/group names retry with `_a` when `${name}_${id}` already exists with the wrong numeric identity
+- `0040_no_command` - Tests bare `./run` fails before container startup without exposing internal `user-command` usage
+- `0041_missing_option_value` - Tests split-form docker run options fail clearly when their required value is missing
