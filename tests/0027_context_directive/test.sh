@@ -5,25 +5,28 @@ set -e
 
 fail=0
 test_dir="$(cd "$(dirname "$0")" && pwd)"
+container_dir="0027_context_directive"
 cd "$test_dir"
 
 cleanup_generated() {
-    rm -rf "extra context" Dockerfile
+    rm -rf "extra context" "$container_dir" Dockerfile
 }
 
 cleanup_generated
 docker rmi -f 0027_context_directive 2>/dev/null || true
+mkdir -p "$container_dir"
+ln -sf ../../../build-and-run "$container_dir/run"
 
 echo "=== Test 1: Local relative named context with a space in the path ==="
 mkdir -p "extra context"
 echo "named-context-original-$$" > "extra context/marker.txt"
-cat > Dockerfile <<'EOF'
-#context: extra=extra context
+cat > "$container_dir/Dockerfile" <<'EOF'
+#context: extra=../extra context
 FROM alpine:latest
 COPY --from=extra marker.txt /tmp/context-marker.txt
 EOF
 
-output=$(./run cat /tmp/context-marker.txt) || {
+output=$(cd "$container_dir" && ./run cat /tmp/context-marker.txt) || {
     echo "FAIL: Build or run failed for local named context"
     fail=1
 }
@@ -37,7 +40,7 @@ fi
 echo ""
 echo "=== Test 2: Named context contents do not trigger auto-rebuild ==="
 echo "named-context-changed-$$" > "extra context/marker.txt"
-output=$(./run cat /tmp/context-marker.txt) || {
+output=$(cd "$container_dir" && ./run cat /tmp/context-marker.txt) || {
     echo "FAIL: Second run failed"
     fail=1
 }
@@ -51,7 +54,7 @@ fi
 echo ""
 echo "=== Test 3: Forced rebuild picks up changed named-context content ==="
 docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
-output=$(./run cat /tmp/context-marker.txt) || {
+output=$(cd "$container_dir" && ./run cat /tmp/context-marker.txt) || {
     echo "FAIL: Forced rebuild failed"
     fail=1
 }
@@ -65,12 +68,12 @@ fi
 echo ""
 echo "=== Test 4: Missing local named context path fails clearly ==="
 docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
-cat > Dockerfile <<'EOF'
+cat > "$container_dir/Dockerfile" <<'EOF'
 #context: missing=missing-context-dir
 FROM alpine:latest
 RUN true
 EOF
-if output=$(./run true 2>&1); then
+if output=$(cd "$container_dir" && ./run true 2>&1); then
     echo "FAIL: Missing local context path unexpectedly succeeded"
     fail=1
 else
@@ -89,12 +92,12 @@ fi
 echo ""
 echo "=== Test 5: Pass-through docker-image named context value ==="
 docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
-cat > Dockerfile <<'EOF'
+cat > "$container_dir/Dockerfile" <<'EOF'
 #context: base=docker-image://alpine:latest
 FROM alpine:latest
 COPY --from=base /etc/alpine-release /tmp/base-release
 EOF
-output=$(./run sh -c 'test -s /tmp/base-release && cat /tmp/base-release') || {
+output=$(cd "$container_dir" && ./run sh -c 'test -s /tmp/base-release && cat /tmp/base-release') || {
     echo "FAIL: Pass-through docker-image named context failed"
     fail=1
 }
@@ -108,12 +111,12 @@ fi
 echo ""
 echo "=== Test 6: Invalid context name fails before docker build ==="
 docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
-cat > Dockerfile <<'EOF'
-#context: BAD=extra context
+cat > "$container_dir/Dockerfile" <<'EOF'
+#context: BAD=../extra context
 FROM alpine:latest
 RUN true
 EOF
-if output=$(./run true 2>&1); then
+if output=$(cd "$container_dir" && ./run true 2>&1); then
     echo "FAIL: Invalid context name unexpectedly succeeded"
     fail=1
 else
