@@ -1,6 +1,7 @@
 # docker-booster
 
 [![Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml)
+[![macOS Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml)
 
 A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone docker command lines by automating user mapping, volume mounts, image rebuilds, and more. When your workflow requires multiple tools with conflicting OS or library dependencies, this is exactly where docker-booster shines.
 

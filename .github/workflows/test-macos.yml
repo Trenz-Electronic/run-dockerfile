@@ -1,0 +1,21 @@
+name: macOS Test Suite
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test-macos:
+    name: macOS self-hosted tests
+    runs-on: [self-hosted, macOS, ARM64]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Docker info
+      run: docker version && docker info
+
+    - name: Run test suite
+      run: tests/run --all
