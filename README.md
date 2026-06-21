@@ -127,7 +127,7 @@ preserved:
 FROM ubuntu:22.04
 ```
 
-Use multiple `#option:` lines for multiple Docker options.
+Use multiple `#option:` lines for multiple Docker run options.
 
 To pass an environment variable, `#option: -e NAME=value` sets a literal value and `#option: -e NAME` (no value) forwards `NAME` from your host environment — both are preserved across the container's internal `su` (see [Forwarding environment variables](#docker-options-on-the-command-line) above).
 
