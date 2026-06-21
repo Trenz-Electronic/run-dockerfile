@@ -3,7 +3,7 @@
 [![Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml)
 [![macOS Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml)
 
-A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone docker command lines by automating user mapping, volume mounts, image rebuilds, and more. When your workflow requires multiple tools with conflicting OS or library dependencies, this is exactly where docker-booster shines.
+A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone docker command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
 
 docker-booster handles the common setup work for containerized development:
 - **User/group mapping** - No more permission headaches with mounted volumes
@@ -37,10 +37,7 @@ Follow these steps:
    ```bash
    git submodule add https://github.com/Trenz-Electronic/docker-booster.git docker-booster
    ```
-   Or clone it directly:
-   ```bash
-   git clone https://github.com/Trenz-Electronic/docker-booster.git
-   ```
+   Or add it by any other compatible method.
 
 3. **Create a symlink** to the build-and-run script:
    <!-- readme-sample: quickstart-03-create-run-symlink -->
@@ -159,7 +156,7 @@ Multiple `#mount:` directives are also supported. They are accumulated in file o
 
 To have files copied over to your home directory in the container, use the `#copy.home:` directive. It takes just a single path to a file relative to your home directory. For multiple files, simply use the directive multiple times.
 
-In this example, there are two license files copied over using #copy.home:
+In this example, there are two license files copied over using `#copy.home:`
 <!-- readme-sample: directive-03-copy-home -->
 ```dockerfile
 #copy.home: .license.dat
