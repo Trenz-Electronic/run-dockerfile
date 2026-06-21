@@ -22,4 +22,10 @@ if echo "$output" | grep -F "USER USERID GROUPID" >/dev/null; then
     exit 1
 fi
 
+if ! echo "$output" | grep -F "Run './run --help' for usage." >/dev/null; then
+    echo "FAIL: bare ./run did not mention --help"
+    echo "Output: $output"
+    exit 1
+fi
+
 echo "PASS: bare ./run fails with a user-facing error"

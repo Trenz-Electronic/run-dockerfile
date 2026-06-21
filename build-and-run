@@ -344,6 +344,52 @@ if [ x"${myname}" = x"user-command" ]; then
   exit 3
 fi
 
+print_usage() {
+  cat <<'EOF'
+Usage: ./run [docker-booster options] COMMAND [ARGS...]
+
+Supported command-line options:
+  -e, --env VAR=VALUE         pass an environment variable
+  -v, --volume SPEC           add a Docker volume mount
+  -p, --publish SPEC          publish a container port
+  -w, --workdir PATH          set the container working directory
+  --network, --net NAME       set the Docker network
+  --device PATH               pass a host device
+  --cpus VALUE                limit CPUs
+  -m, --memory VALUE          limit memory
+  --gpus VALUE                request GPUs
+  --name NAME                 set the container name
+  --privileged                run with extended privileges
+  --read-only                 make the container filesystem read-only
+
+Examples:
+  ./run /bin/sh
+  ./run make test
+  ./run -e DEBUG=1 env
+  ./run -v "$PWD/cache:/cache" sh
+
+Dockerfile directives, to be used in the first 20 lines of Dockerfile:
+  #option:        add Docker run/build options
+  #mount:         choose mounted host directory: .git, pwd, or home
+  #copy.home:     copy one host home file or directory into container home
+  #usermount:     mount one host path into the same in-container path
+  #platform:      set build platform: arm64, amd64, armv7, ...
+  #http.static:   serve a host directory during image build
+  #context:       choose Docker build context
+  #sudo:          enable passwordless sudo with "#sudo: all"
+
+Note:
+  The #option: directive accepts any Docker option, not just the limited subset listed above.
+EOF
+}
+
+case "${1:-}" in
+  --help|-h)
+    print_usage
+    exit 0
+    ;;
+esac
+
 host_realpath_no_symlinks() {
   _hrns_path=$1
   case $_hrns_path in
@@ -638,6 +684,7 @@ CMDLINE_ENV_VARS=$(echo "$CMDLINE_ENV_VARS" | sed 's/^,//')
 if [ $# -eq 0 ]; then
   >&2 echo "ERROR: no command specified; no container action was taken."
   >&2 echo "       Pass a command, for example './run /bin/sh' or './run /bin/bash'."
+  >&2 echo "       Run './run --help' for usage."
   exit 1
 fi
 
