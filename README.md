@@ -3,7 +3,7 @@
 [![Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml)
 [![macOS Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml)
 
-A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone docker command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
+A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone Docker command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
 
 docker-booster handles the common setup work for containerized development:
 - **User/group mapping** - No more permission headaches with mounted volumes
@@ -65,7 +65,7 @@ The image is built automatically on the first run and rebuilt when the Dockerfil
 
 ## Docker options on the command line
 
-Pass docker run options directly on the command line:
+Pass Docker run options directly on the command line:
 
 <!-- readme-sample: options-01-command-line -->
 ```bash
@@ -92,7 +92,7 @@ Pass docker run options directly on the command line:
 - `--privileged`, `--read-only` - Supported boolean flags
 - `-h`/`--help` - Show usage
 
-Important: only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option docker-booster does not recognize, put it in the Dockerfile with `#option:` instead.
+**Important:** only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option docker-booster does not recognize, put it in the Dockerfile with `#option:` instead.
 
 **Environment variables:**
 - `DOCKER_BOOSTER_VERBOSE=1` - Show informational messages (mount directives, file collection, etc.); only the literal value `1` enables verbose output.
@@ -120,10 +120,11 @@ write the option name first and the value after the first space; the whole
 remaining value is passed literally, so spaces and glob characters are
 preserved:
 
+<!-- readme-sample: directive-01b-option-spaces -->
 ```dockerfile
 #option: -v /tmp/my cache:/cache
 #option: -e TOOL_FLAGS=--mode fast
-#option: --mount type=bind,source=/tmp/my cache,target=/cache,readonly
+#option: --mount type=bind,source=/tmp/my cache,target=/cache-ro,readonly
 FROM ubuntu:22.04
 ```
 
@@ -370,57 +371,46 @@ On hosts that provide `/etc/localtime`, you can also use the host timezone file 
 
 ## Non-interactive installers
 
-Vendor tool installers (FPGA toolchains, SDKs, EDA suites) are often
-interactive: they page through a license and wait for you to type `yes`. A
+Vendor tool installers are often interactive: they page through a license and wait for you to type `yes`. A
 `docker build` has no terminal attached, so such an installer stalls or aborts.
 docker-booster only delivers the installer into the build (see
 [HTTP static file serving](#http-static-file-serving) and
 [BuildKit named contexts](#buildkit-named-contexts)); running it unattended is
-ordinary Dockerfile work. Three approaches, in order of preference:
+ordinary Dockerfile work.
 
-1. **Use the installer's unattended flag.** Most installers accept a
-   command-line option for a silent install — for example `--mode unattended`,
-   `--accept-license`, or `-a`. Prefer this whenever it exists; it needs no
-   extra tooling.
+Prefer the installer's own unattended flag whenever it has one (for example
+`--mode unattended`, `--accept-license`, or `-a`). When the installer instead
+pages a license (waiting for a keypress) or asks conditional questions that a
+fixed set of answers cannot satisfy, drive it with `expect`. Because
+docker-booster always enables BuildKit, the `expect` script can be written
+inline with a `COPY` heredoc instead of shipping a separate file:
 
-2. **Pipe fixed answers** when there are only a couple of simple prompts:
-   ```dockerfile
-   RUN yes | sh ./installer.run
-   # or, for distinct answers in order:
-   RUN printf 'y\n/opt/sdk\n' | sh ./installer.run
-   ```
+<!-- readme-sample: installer-01-expect -->
+```dockerfile
+#http.static: INSTALLER=../installers
+FROM buildpack-deps:bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends expect \
+    && rm -rf /var/lib/apt/lists/*
 
-3. **Drive it with `expect`** when the installer pages a license (waits for a
-   keypress) or asks conditional questions a fixed pipe cannot satisfy. Because
-   docker-booster always enables BuildKit, the `expect` script can be written
-   inline with a `COPY` heredoc instead of shipping a separate file:
+ARG HTTP_INSTALLER
+RUN wget -q ${HTTP_INSTALLER}/hello-installer.run
 
-   <!-- readme-sample: installer-01-expect -->
-   ```dockerfile
-   #http.static: INSTALLER=../installers
-   FROM buildpack-deps:bookworm
-   RUN apt-get update && apt-get install -y --no-install-recommends expect \
-       && rm -rf /var/lib/apt/lists/*
-
-   ARG HTTP_INSTALLER
-   RUN wget -q ${HTTP_INSTALLER}/hello-installer.run
-
-   COPY <<'EOF' /tmp/drive-installer.exp
-   # Wait up to 5 minutes per prompt; use -1 for installers that can run longer.
-   set timeout 300
-   spawn sh ./hello-installer.run
-   expect "Press Enter to view the license"
-   send "\r"
-   expect "Do you accept the license?"
-   send "y\r"
-   expect "Install location:"
-   send "/opt/hello\r"
-   expect "Installation complete."
-   expect eof
-   EOF
-   RUN expect /tmp/drive-installer.exp
-   RUN /opt/hello/bin/hello
-   ```
+COPY <<'EOF' /tmp/drive-installer.exp
+# Wait up to 5 minutes per prompt; use -1 for installers that can run longer.
+set timeout 300
+spawn sh ./hello-installer.run
+expect "Press Enter to view the license"
+send "\r"
+expect "Do you accept the license?"
+send "y\r"
+expect "Install location:"
+send "/opt/hello\r"
+expect "Installation complete."
+expect eof
+EOF
+RUN expect /tmp/drive-installer.exp
+RUN /opt/hello/bin/hello
+```
 
 Match each `expect` line to a prompt the installer actually prints and each
 `send` to the answer it wants. These scripts are brittle by nature, so rebuild
@@ -449,7 +439,7 @@ my-project/
     └── ...
 ```
 
-As long as symlinks in your docker containers point to your docker-booster/build-and-run script, it works.
+As long as each container directory's `run` symlink points to `docker-booster/build-and-run`, it works.
 
 **Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); docker-booster checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
 

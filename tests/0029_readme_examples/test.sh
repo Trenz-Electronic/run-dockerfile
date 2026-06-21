@@ -12,11 +12,14 @@ project="$workspace/project"
 original_home="$HOME"
 
 cleanup() {
-    docker rmi -f my-container readme-option readme-mount readme-copy-home \
-        readme-usermount-env readme-usermount-multiple readme-http-static \
-        readme-context-local readme-sudo readme-tz-alpine \
+    docker rmi -f my-container readme-option readme-option-spaces readme-mount \
+        readme-copy-home readme-usermount-env readme-usermount-multiple \
+        readme-http-static readme-context-local readme-sudo readme-tz-alpine \
         readme-tz-locale-debian readme-tz-locale-debian-regional \
         readme-tz-locale-host readme-installer-expect >/dev/null 2>&1 || true
+    # Empty host dir created for the spaced-path #option: sample; rmdir is
+    # safe because the sample only reads the mount, so it stays empty.
+    rmdir "/tmp/my cache" 2>/dev/null || true
     rm -rf "$workspace"
 }
 trap cleanup EXIT INT TERM
@@ -208,6 +211,24 @@ prepare_container_from_sample directive-01-option readme-option
     echo "FAIL: #option: README sample failed"
     fail=1
 }
+
+# The spaced-value #option: sample bind-mounts /tmp/my cache (a path with a
+# space) via both -v and --mount, and sets -e TOOL_FLAGS=--mode fast. The
+# --mount source must already exist, so create it first.
+mkdir -p "/tmp/my cache"
+prepare_container_from_sample directive-01b-option-spaces readme-option-spaces
+output=$(cd "$project" && ./containers/readme-option-spaces/run sh -lc 'test "$TOOL_FLAGS" = "--mode fast" && test -d /cache && test -d /cache-ro && echo OPTION_SPACES_OK') || {
+    echo "FAIL: #option: spaced-value README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -F "OPTION_SPACES_OK" >/dev/null; then
+    echo "PASS: #option: spaced-value README sample preserved spaced option values"
+else
+    echo "FAIL: #option: spaced-value README sample did not preserve spaced option values"
+    echo "Output: $output"
+    fail=1
+fi
 
 prepare_container_from_sample directive-02-mount readme-mount
 output=$(cd "$project" && DOCKER_BOOSTER_VERBOSE=1 ./containers/readme-mount/run pwd 2>&1) || {
@@ -466,6 +487,7 @@ echo ""
 echo "=== Static Dockerfile directive sample checks ==="
 for sample_id in \
     directive-01-option \
+    directive-01b-option-spaces \
     directive-02-mount \
     directive-03-copy-home \
     directive-04-usermount-env \
