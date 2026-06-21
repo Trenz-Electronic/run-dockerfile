@@ -12,7 +12,7 @@ docker-booster handles the common setup work for containerized development:
 - **TTY handling** - Interactive sessions just work
 - **Common options** - Keep repeated Docker options in the Dockerfile
 - **Cross-architecture builds** - Run builds in a target-architecture container when Docker supports that platform
-- **Large source files outside build context** - Easily incorporated into your Dockerfile
+- **Large tool installation files outside build context** - Easily incorporated into your Dockerfile, just invoke the installer. Many installers offer a command-line flag for a quiet, unattended install; when none is available, a small `expect` script can drive the prompts (see [Non-interactive installers](#non-interactive-installers)).
 
 ## Quick Start
 
@@ -367,6 +367,67 @@ On hosts that provide `/etc/localtime`, you can also use the host timezone file 
 ```
 
 `/etc/localtime` works on common Linux hosts and Docker Desktop/macOS setups. `/etc/timezone` is Debian-like/Linux-specific and is often absent on macOS. `TZ=Region/City` needs timezone data in the image; in minimal images, install `tzdata` or mount `/etc/localtime`.
+
+## Non-interactive installers
+
+Vendor tool installers (FPGA toolchains, SDKs, EDA suites) are often
+interactive: they page through a license and wait for you to type `yes`. A
+`docker build` has no terminal attached, so such an installer stalls or aborts.
+docker-booster only delivers the installer into the build (see
+[HTTP Static File Serving](#http-static-file-serving) and
+[BuildKit Named Contexts](#buildkit-named-contexts)); running it unattended is
+ordinary Dockerfile work. Three approaches, in order of preference:
+
+1. **Use the installer's unattended flag.** Most installers accept a
+   command-line option for a silent install — for example `--mode unattended`,
+   `--accept-license`, or `-a`. Prefer this whenever it exists; it needs no
+   extra tooling.
+
+2. **Pipe fixed answers** when there are only a couple of simple prompts:
+   ```dockerfile
+   RUN yes | sh ./installer.run
+   # or, for distinct answers in order:
+   RUN printf 'y\n/opt/sdk\n' | sh ./installer.run
+   ```
+
+3. **Drive it with `expect`** when the installer pages a license (waits for a
+   keypress) or asks conditional questions a fixed pipe cannot satisfy. Because
+   docker-booster always enables BuildKit, the `expect` script can be written
+   inline with a `COPY` heredoc instead of shipping a separate file:
+
+   <!-- readme-sample: installer-01-expect -->
+   ```dockerfile
+   #http.static: INSTALLER=../installers
+   FROM buildpack-deps:bookworm
+   RUN apt-get update && apt-get install -y --no-install-recommends expect \
+       && rm -rf /var/lib/apt/lists/*
+
+   ARG HTTP_INSTALLER
+   RUN wget -q ${HTTP_INSTALLER}/hello-installer.run
+
+   COPY <<'EOF' /tmp/drive-installer.exp
+   # Wait up to 5 minutes per prompt; use -1 for installers that can run longer.
+   set timeout 300
+   spawn sh ./hello-installer.run
+   expect "Press Enter to view the license"
+   send "\r"
+   expect "Do you accept the license?"
+   send "y\r"
+   expect "Install location:"
+   send "/opt/hello\r"
+   expect "Installation complete."
+   expect eof
+   EOF
+   RUN expect /tmp/drive-installer.exp
+   RUN /opt/hello/bin/hello
+   ```
+
+Match each `expect` line to a prompt the installer actually prints and each
+`send` to the answer it wants. These scripts are brittle by nature, so rebuild
+(and re-test) whenever the installer version changes. The example drives a
+stand-in `hello-installer.run` that prints a license, asks for confirmation and
+an install path, then installs a small `hello` command; swap in your real
+installer and its prompts.
 
 ## Project Structure
 

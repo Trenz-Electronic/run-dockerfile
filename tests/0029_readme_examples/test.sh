@@ -16,7 +16,7 @@ cleanup() {
         readme-usermount-env readme-usermount-multiple readme-http-static \
         readme-context-local readme-sudo readme-tz-alpine \
         readme-tz-locale-debian readme-tz-locale-debian-regional \
-        readme-tz-locale-host >/dev/null 2>&1 || true
+        readme-tz-locale-host readme-installer-expect >/dev/null 2>&1 || true
     rm -rf "$workspace"
 }
 trap cleanup EXIT INT TERM
@@ -423,6 +423,46 @@ else
 fi
 
 echo ""
+echo "=== Run non-interactive installer (expect) README sample ==="
+# Build a stand-in for an interactive vendor installer. Its prompt strings must
+# stay in sync with the expect sample in README.md (installer-01-expect); if they
+# drift, the expect script times out and this test fails (which is the point).
+mkdir -p "$project/containers/installers"
+cat > "$project/containers/installers/hello-installer.run" <<'INSTALLER_EOF'
+#!/bin/sh
+printf 'Press Enter to view the license '
+read _ignore
+printf 'END USER LICENSE AGREEMENT (excerpt)\n'
+printf 'Do you accept the license? [y/N] '
+read answer
+case "$answer" in
+    y|Y) ;;
+    *) echo "License not accepted; aborting." >&2; exit 1 ;;
+esac
+printf 'Install location: '
+read prefix
+mkdir -p "$prefix/bin"
+cat > "$prefix/bin/hello" <<'HELLO_EOF'
+#!/bin/sh
+echo "hello, world"
+HELLO_EOF
+chmod +x "$prefix/bin/hello"
+echo "Installation complete."
+INSTALLER_EOF
+prepare_container_from_sample installer-01-expect readme-installer-expect
+output=$(cd "$project" && ./containers/readme-installer-expect/run /opt/hello/bin/hello) || {
+    echo "FAIL: non-interactive installer (expect) README sample failed"
+    fail=1
+    output=""
+}
+if [ "$output" = "hello, world" ]; then
+    echo "PASS: non-interactive installer (expect) README sample drove the installer"
+else
+    echo "FAIL: non-interactive installer (expect) README sample produced unexpected output: '$output'"
+    fail=1
+fi
+
+echo ""
 echo "=== Static Dockerfile directive sample checks ==="
 for sample_id in \
     directive-01-option \
@@ -435,7 +475,8 @@ for sample_id in \
     directive-08-context-local \
     directive-09-context-remote \
     directive-10-sudo \
-    timezone-04-host-env-dockerfile
+    timezone-04-host-env-dockerfile \
+    installer-01-expect
 do
     assert_dockerfile_directives_within_first_20 "$sample_id"
 done

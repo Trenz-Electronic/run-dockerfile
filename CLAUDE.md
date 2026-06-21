@@ -163,7 +163,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0026_user_mapping_uid_conflict` - Tests an image user with the host's username but a different UID is not reused; container runs with the host UID/GID
 - `0027_context_directive` - Tests `#context:` named contexts (local path with spaces, no auto-rebuild on named-context-only changes, forced rebuild, missing path error, pass-through image context, invalid name)
 - `0028_directive_location` - Tests known docker-booster directives after line 20 fail with a clear error instead of being silently ignored
-- `0029_readme_examples` - Tests indexed README Quick Start, command-line option, and Dockerfile directive samples by extracting them into a temporary project
+- `0029_readme_examples` - Tests indexed README Quick Start, command-line option, and Dockerfile directive samples by extracting them into a temporary project (including the "Non-interactive installers" `expect` sample, which is driven against a stand-in interactive `hello-installer.run` fixture so the heredoc `expect` script stays verified)
 - `0030_http_static_multiple` - Tests two `#http.static:` directives each serve their own directory (per-server port files, no stale-port mismap) and leave no port files behind
 - `0031_env_multi_var` - Tests every variable on a multi-variable `ENV` line is carried into `DOCKER_PRESERVE_ENV`, not just the first
 - `0032_user_command_readonly` - Tests `/bin/user-command` is bind-mounted read-only (checked via `/proc/self/mountinfo`)
