@@ -369,7 +369,7 @@ Examples:
   ./run -v "$PWD/cache:/cache" sh
 
 Dockerfile directives, to be used in the first 20 lines of Dockerfile:
-  #option:        add Docker run/build options
+  #option:        add Docker run options
   #mount:         choose mounted host directory: .git, pwd, or home
   #copy.home:     copy one host home file or directory into container home
   #usermount:     mount one host path into the same in-container path
@@ -379,7 +379,7 @@ Dockerfile directives, to be used in the first 20 lines of Dockerfile:
   #sudo:          enable passwordless sudo with "#sudo: all"
 
 Note:
-  The #option: directive accepts any Docker option, not just the limited subset listed above.
+  The #option: directive accepts any Docker run option, not just the limited subset listed above.
 EOF
 }
 
