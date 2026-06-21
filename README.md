@@ -302,6 +302,74 @@ Usage:
 
 On Linux, X11 typically also requires forwarding `DISPLAY` and mounting `/tmp/.X11-unix` as shown above. Some setups instead require `--network host`, a remote X server, or Docker Desktop-specific display configuration.
 
+### Timezone and Locale
+
+Timezone and locale settings are useful for GUI applications that should match the desktop environment, and for tools that produce timestamps or other locale-dependent output in regional settings.
+
+For reproducible project containers, set the timezone and locale in the Dockerfile:
+
+<!-- readme-sample: timezone-01-alpine-fixed -->
+```dockerfile
+FROM alpine:latest
+RUN apk add --no-cache tzdata
+ENV TZ=Etc/UTC
+```
+
+<!-- readme-sample: timezone-02-debian-fixed -->
+```dockerfile
+FROM ubuntu:22.04
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+ENV TZ=Etc/UTC
+ENV LANG=C.UTF-8
+```
+
+For a generated regional locale, install `locales` and enable the locale explicitly:
+
+<!-- readme-sample: timezone-03-debian-regional-locale -->
+```dockerfile
+FROM ubuntu:22.04
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends locales \
+    && sed -i 's/^# *de_DE.UTF-8 UTF-8/de_DE.UTF-8 UTF-8/' /etc/locale.gen \
+    && locale-gen \
+    && rm -rf /var/lib/apt/lists/*
+ENV LANG=de_DE.UTF-8
+ENV LC_ALL=de_DE.UTF-8
+```
+
+If you want a project container to use host-provided values, forward them from the Dockerfile with `#option:`:
+
+<!-- readme-sample: timezone-04-host-env-dockerfile -->
+```dockerfile
+#option: -e TZ
+#option: -e LANG
+FROM buildpack-deps:bookworm
+```
+
+The same settings can be provided for one command on the command line:
+
+<!-- readme-sample: timezone-05-command-fixed -->
+```bash
+./containers/my-container/run -e TZ=Etc/UTC date +%z
+./containers/my-container/run -e LANG=C.UTF-8 sh -lc 'printf "%s\n" "$LANG"'
+```
+
+<!-- readme-sample: timezone-06-command-host-env -->
+```bash
+TZ=Etc/UTC LANG=C.UTF-8 ./containers/my-container/run -e TZ -e LANG sh -lc 'printf "%s %s\n" "$TZ" "$LANG"'
+```
+
+On hosts that provide `/etc/localtime`, you can also use the host timezone file directly:
+
+<!-- readme-sample: timezone-07-command-localtime -->
+```bash
+./containers/my-container/run -v /etc/localtime:/etc/localtime:ro date +%z
+```
+
+`/etc/localtime` works on common Linux hosts and Docker Desktop/macOS setups. `/etc/timezone` is Debian-like/Linux-specific and is often absent on macOS. `TZ=Region/City` needs timezone data in the image; in minimal images, install `tzdata` or mount `/etc/localtime`.
+
 ## Project Structure
 
 docker-booster is flexible about where you place your container directories. The example structure, which is in no way enforced, is:

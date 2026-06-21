@@ -14,7 +14,9 @@ original_home="$HOME"
 cleanup() {
     docker rmi -f my-container readme-option readme-mount readme-copy-home \
         readme-usermount-env readme-usermount-multiple readme-http-static \
-        readme-context-local readme-sudo >/dev/null 2>&1 || true
+        readme-context-local readme-sudo readme-tz-alpine \
+        readme-tz-locale-debian readme-tz-locale-debian-regional \
+        readme-tz-locale-host >/dev/null 2>&1 || true
     rm -rf "$workspace"
 }
 trap cleanup EXIT INT TERM
@@ -314,6 +316,113 @@ else
 fi
 
 echo ""
+echo "=== Run timezone and locale README samples ==="
+prepare_container_from_sample timezone-01-alpine-fixed readme-tz-alpine
+output=$(cd "$project" && ./containers/readme-tz-alpine/run sh -lc 'printf "%s\n" "$TZ"; date +%z') || {
+    echo "FAIL: Alpine timezone README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -Fx "Etc/UTC" >/dev/null &&
+   echo "$output" | grep -Fx "+0000" >/dev/null; then
+    echo "PASS: Alpine timezone README sample set UTC"
+else
+    echo "FAIL: Alpine timezone README sample did not set UTC"
+    echo "Output: $output"
+    fail=1
+fi
+
+prepare_container_from_sample timezone-02-debian-fixed readme-tz-locale-debian
+output=$(cd "$project" && ./containers/readme-tz-locale-debian/run sh -lc 'printf "%s\n" "$TZ"; printf "%s\n" "$LANG"; date +%z') || {
+    echo "FAIL: Debian/Ubuntu timezone and locale README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -Fx "Etc/UTC" >/dev/null &&
+   echo "$output" | grep -Fx "C.UTF-8" >/dev/null &&
+   echo "$output" | grep -Fx "+0000" >/dev/null; then
+    echo "PASS: Debian/Ubuntu timezone and locale README sample set UTC and C.UTF-8"
+else
+    echo "FAIL: Debian/Ubuntu timezone and locale README sample did not set expected values"
+    echo "Output: $output"
+    fail=1
+fi
+
+prepare_container_from_sample timezone-03-debian-regional-locale readme-tz-locale-debian-regional
+output=$(cd "$project" && ./containers/readme-tz-locale-debian-regional/run sh -lc 'printf "%s\n" "$LANG"; printf "%s\n" "$LC_ALL"; locale -a | grep -Fx de_DE.utf8') || {
+    echo "FAIL: Debian/Ubuntu regional locale README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -Fx "de_DE.UTF-8" >/dev/null &&
+   echo "$output" | grep -Fx "de_DE.utf8" >/dev/null; then
+    echo "PASS: Debian/Ubuntu regional locale README sample generated de_DE.UTF-8"
+else
+    echo "FAIL: Debian/Ubuntu regional locale README sample did not produce expected locale values"
+    echo "Output: $output"
+    fail=1
+fi
+
+prepare_container_from_sample timezone-04-host-env-dockerfile readme-tz-locale-host
+output=$(cd "$project" && TZ=Etc/UTC LANG=C.UTF-8 ./containers/readme-tz-locale-host/run sh -lc 'printf "%s %s\n" "$TZ" "$LANG"') || {
+    echo "FAIL: host-provided timezone and locale Dockerfile README sample failed"
+    fail=1
+    output=""
+}
+if [ "$output" = "Etc/UTC C.UTF-8" ]; then
+    echo "PASS: host-provided timezone and locale Dockerfile README sample forwarded values"
+else
+    echo "FAIL: host-provided timezone and locale Dockerfile README sample produced unexpected output: '$output'"
+    fail=1
+fi
+
+prepare_basic_container my-container
+write_sample_script timezone-05-command-fixed "$workspace/timezone-05-command-fixed.sh"
+output=$(cd "$project" && sh "$workspace/timezone-05-command-fixed.sh") || {
+    echo "FAIL: fixed command-line timezone and locale README sample failed"
+    fail=1
+    output=""
+}
+if echo "$output" | grep -Fx "+0000" >/dev/null &&
+   echo "$output" | grep -Fx "C.UTF-8" >/dev/null; then
+    echo "PASS: fixed command-line timezone and locale README sample produced expected values"
+else
+    echo "FAIL: fixed command-line timezone and locale README sample produced unexpected output"
+    echo "Output: $output"
+    fail=1
+fi
+
+write_sample_script timezone-06-command-host-env "$workspace/timezone-06-command-host-env.sh"
+output=$(cd "$project" && sh "$workspace/timezone-06-command-host-env.sh") || {
+    echo "FAIL: host-env command-line timezone and locale README sample failed"
+    fail=1
+    output=""
+}
+if [ "$output" = "Etc/UTC C.UTF-8" ]; then
+    echo "PASS: host-env command-line timezone and locale README sample forwarded values"
+else
+    echo "FAIL: host-env command-line timezone and locale README sample produced unexpected output: '$output'"
+    fail=1
+fi
+
+write_sample_script timezone-07-command-localtime "$workspace/timezone-07-command-localtime.sh"
+if [ -e /etc/localtime ]; then
+    output=$(cd "$project" && sh "$workspace/timezone-07-command-localtime.sh") || {
+        echo "FAIL: /etc/localtime command-line README sample failed"
+        fail=1
+        output=""
+    }
+    if echo "$output" | grep -E '^[+-][0-9]{4}$' >/dev/null; then
+        echo "PASS: /etc/localtime command-line README sample produced a timezone offset"
+    else
+        echo "FAIL: /etc/localtime command-line README sample produced unexpected output: '$output'"
+        fail=1
+    fi
+else
+    echo "SKIP: /etc/localtime command-line README sample requires host /etc/localtime"
+fi
+
+echo ""
 echo "=== Static Dockerfile directive sample checks ==="
 for sample_id in \
     directive-01-option \
@@ -325,7 +434,8 @@ for sample_id in \
     directive-07-http-static \
     directive-08-context-local \
     directive-09-context-remote \
-    directive-10-sudo
+    directive-10-sudo \
+    timezone-04-host-env-dockerfile
 do
     assert_dockerfile_directives_within_first_20 "$sample_id"
 done
