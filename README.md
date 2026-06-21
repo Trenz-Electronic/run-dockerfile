@@ -14,7 +14,7 @@ docker-booster handles the common setup work for containerized development:
 - **Cross-architecture builds** - Run builds in a target-architecture container when Docker supports that platform
 - **Large tool installation files outside build context** - Easily incorporated into your Dockerfile, just invoke the installer. Many installers offer a command-line flag for a quiet, unattended install; when none is available, a small `expect` script can drive the prompts (see [Non-interactive installers](#non-interactive-installers)).
 
-## Quick Start
+## Quick start
 
 Follow these steps:
 
@@ -97,7 +97,7 @@ Important: only the above listed options are supported on the command line. Anyt
 **Environment variables:**
 - `DOCKER_BOOSTER_VERBOSE=1` - Show informational messages (mount directives, file collection, etc.); only the literal value `1` enables verbose output.
 
-## Dockerfile Directives
+## Dockerfile directives
 
 docker-booster extends Dockerfiles with special comment directives.
 
@@ -133,12 +133,12 @@ To pass an environment variable, `#option: -e NAME=value` sets a literal value a
 
 ### Fine-tune volume mapping
 
-The default behaviour of docker-booster is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behaviour corresponds to `#mount: .git pwd`.
+The default behavior of docker-booster is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behavior corresponds to `#mount: .git pwd`.
 
 The `#mount:` directive accepts whitespace-separated keywords:
 - `.git` - Root of the git repository (searches upward from current directory)
 - `pwd` - Current working directory
-- `home` - Home directory, do not use with untrusted containers
+- `home` - Home directory — do not use with untrusted containers
 
 The keywords are tried in order and the first available directory is mounted; if none are available, docker-booster exits with an error.
 
@@ -194,7 +194,7 @@ FROM ubuntu:22.04
 
 This is useful when you need persistent storage for specific directories without exposing your entire home directory.
 
-### Platform Selection
+### Platform selection
 
 Specify the target platform in the first 20 lines:
 
@@ -208,7 +208,7 @@ Supported values: Any Docker platform string (e.g., `arm64`, `amd64`, `linux/arm
 
 This feature is useful when you want to build inside an emulated target-architecture environment instead of setting up a cross-compiler toolchain. docker-booster passes the platform to Docker; for foreign architectures, Docker must already be configured with the required binfmt/QEMU support. Builds under emulation can be significantly slower.
 
-### HTTP Static File Serving
+### HTTP static file serving
 
 Serve local directories via HTTP during image builds (useful for large installers):
 
@@ -221,16 +221,16 @@ ARG HTTP_INSTALLER
 RUN wget ${HTTP_INSTALLER}/large-sdk-installer.run && sh ./large-sdk-installer.run && rm ./large-sdk-installer.run
 ```
 
-**Note:** Relative paths are resolved from the Dockerfile's directory. The directory must exist before build. Declare `ARG HTTP_<KEY>` after `FROM` before using the generated URL; for `#http.static: INSTALLER=...`, declare `ARG HTTP_INSTALLER`.
+**Note:** Relative paths are resolved from the Dockerfile's directory. The directory must exist before build. Declare `ARG HTTP_<KEY>` after `FROM`, before any `RUN` that uses the generated URL; for `#http.static: INSTALLER=...`, declare `ARG HTTP_INSTALLER`.
 
 The script automatically:
 - Starts a temporary HTTP server on a random port
 - Passes the URL as `HTTP_<KEY>` build argument
 - Cleans up the server after build completes
 
-**Caveat:** Changes to files in directories served by `#http.static:` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild (the image is tagged with the container directory name — see [Project Structure](#project-structure)).
+**Caveat:** Changes to files in directories served by `#http.static:` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild (the image is tagged with the container directory name — see [Project structure](#project-structure)).
 
-### BuildKit Named Contexts
+### BuildKit named contexts
 
 Pass Docker BuildKit named contexts with `#context:`:
 
@@ -253,7 +253,7 @@ Multiple directives are allowed. The context name must match `[a-z_][a-z0-9_.-]*
 
 **Caveat:** Changes to files inside named contexts do not trigger automatic rebuilds. Changing the `#context:` line itself does trigger a rebuild. Use `docker rmi <image-name>` to force a rebuild after changing only named-context contents.
 
-### Sudo Configuration
+### Sudo configuration
 
 If you need `sudo` access inside the container, use the `#sudo:` directive and make sure sudo has been installed, as in the following example:
 
@@ -266,7 +266,7 @@ RUN apt-get update && apt-get install -y sudo
 
 With `#sudo: all`, docker-booster creates a sudoers entry allowing passwordless sudo for the container user. Without this directive, even if sudo is installed, it won't be configured for the container user.
 
-### GUI Applications (X11)
+### GUI applications (X11)
 
 docker-booster can run X11 applications with minimal configuration:
 
@@ -300,7 +300,7 @@ Usage:
 
 On Linux, X11 typically also requires forwarding `DISPLAY` and mounting `/tmp/.X11-unix` as shown above. Some setups instead require `--network host`, a remote X server, or Docker Desktop-specific display configuration.
 
-### Timezone and Locale
+### Timezone and locale
 
 Timezone and locale settings are useful for GUI applications that should match the desktop environment, and for tools that produce timestamps or other locale-dependent output in regional settings.
 
@@ -374,8 +374,8 @@ Vendor tool installers (FPGA toolchains, SDKs, EDA suites) are often
 interactive: they page through a license and wait for you to type `yes`. A
 `docker build` has no terminal attached, so such an installer stalls or aborts.
 docker-booster only delivers the installer into the build (see
-[HTTP Static File Serving](#http-static-file-serving) and
-[BuildKit Named Contexts](#buildkit-named-contexts)); running it unattended is
+[HTTP static file serving](#http-static-file-serving) and
+[BuildKit named contexts](#buildkit-named-contexts)); running it unattended is
 ordinary Dockerfile work. Three approaches, in order of preference:
 
 1. **Use the installer's unattended flag.** Most installers accept a
@@ -429,7 +429,7 @@ stand-in `hello-installer.run` that prints a license, asks for confirmation and
 an install path, then installs a small `hello` command; swap in your real
 installer and its prompts.
 
-## Project Structure
+## Project structure
 
 docker-booster is flexible about where you place your container directories. The example structure, which is in no way enforced, is:
 
@@ -469,7 +469,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 - `tar` with gzip support — only when using `#copy.home:` (the files are delivered as a tarball extracted inside the container).
 - `sudo` — only when using `#sudo: all`; docker-booster creates `/etc/sudoers.d/` if it is missing.
 
-## Technical Details
+## Technical details
 
 - Creates a temporary user inside the container matching your host UID/GID; conflicting image user/group names get deterministic fallback names such as `${name}_${id}` and `${name}_${id}_a`
 - Uses `su` for privilege de-escalation (no sudo requirement)
@@ -479,7 +479,7 @@ As long as symlinks in your docker containers point to your docker-booster/build
 - Always uses Docker BuildKit (the modern build path, the engine default since Docker 23.0); `RUN --mount`, cache mounts, build secrets, and named contexts work out of the box
 - Automatically rebuilds the image when detecting changes in the Dockerfile's build context directory using the hash stored as a label in the Docker image. Mounted files outside that context do not trigger rebuilds by themselves.
 
-## Security Considerations
+## Security considerations
 
 docker-booster has **secure defaults for trusted Dockerfiles**:
 
