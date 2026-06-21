@@ -93,6 +93,7 @@ Pass docker run options directly on the command line:
 - `--gpus` - GPU access
 - `--name` - Container name
 - `--privileged`, `--read-only` - Supported boolean flags
+- `-h`/`--help` - Show usage
 
 Important: only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option docker-booster does not recognize, put it in the Dockerfile with `#option:` instead.
 
@@ -117,7 +118,7 @@ For any options you want to always be present on the command line, but don't bot
 FROM ubuntu:22.04
 ```
 
-Each `#option:` line represents one Docker option. If the option has a value,
+Each `#option:` line represents one Docker run option. If the option has a value,
 write the option name first and the value after the first space; the whole
 remaining value is passed literally, so spaces and glob characters are
 preserved:
