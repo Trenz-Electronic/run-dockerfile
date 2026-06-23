@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test: docker-booster directives after line 20 fail loudly.
+# Test: run-dockerfile directives after line 20 fail loudly.
 
 set -e
 

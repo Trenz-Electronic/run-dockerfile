@@ -3,7 +3,7 @@
 
 ## Project Overview
 
-docker-booster is a single-script Docker workflow tool that automates image building, user mapping, and volume mounting for development environments.
+run-dockerfile is a single-script Docker workflow tool that automates image building, user mapping, and volume mounting for development environments.
 
 ## Design Principles
 
@@ -15,7 +15,7 @@ docker-booster is a single-script Docker workflow tool that automates image buil
   **bash** (`#!/usr/bin/env bash`); see the "Two shells" note under Architecture.
 - `tests/lib/portable.sh` - POSIX `/bin/sh` helpers for test-only host portability
   checks. Product portability helpers belong in `build-and-run`.
-- `README.md` - User documentation. In the README.md, the focus is on what it does for users, including technical details only when necessary for using the docker-booster. The implementation details should go into CLAUDE.md.
+- `README.md` - User documentation. In the README.md, the focus is on what it does for users, including technical details only when necessary for using the run-dockerfile. The implementation details should go into CLAUDE.md.
 
 ## Dockerfile Directive Syntax
 
@@ -36,10 +36,10 @@ The script parses special comment directives from Dockerfiles:
 - `#mount:` accepts keywords: `.git` (git repo root), `pwd` (current directory), `home` (home directory)
 - FIRST-found semantics: checks keywords in order, uses first match
 - Multiple `#mount:` directives accumulate keywords
-- Known docker-booster directives after line 20 are an error rather than silently ignored.
+- Known run-dockerfile directives after line 20 are an error rather than silently ignored.
 - `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data. Like `#usermount:`, it takes **exactly one path per directive line** (trimmed, parsed into a bash array), so filenames may contain spaces; use multiple `#copy.home:` lines for multiple files. After extraction, ownership is fixed **only** on the copied entries and the parent directories leading to them (driven by `tar tzf`, walking each member's ancestors) — never a recursive `chown -R` over `$HOME`, which could re-own a bind-mounted host home (`#mount: home`, or simply the project dir that usually lives under `$HOME`).
 - `#usermount:` takes **exactly one path per directive line** (the whole value after the colon, trimmed), so paths may contain spaces. Use multiple `#usermount:` lines for multiple paths — they accumulate. (Unlike `#mount:`, which whitespace-splits its keywords, the value is *not* split into several entries.)
-- `#context:` is build-time only and maps directly to Docker BuildKit named contexts: `#context: name=value` becomes `docker build --build-context name=value`. Multiple directives accumulate. The parser splits only on the first `=`, trims outer whitespace around the name and value, validates only the name (`[a-z_][a-z0-9_.-]*`), and passes the value through a bash array without shell evaluation. Local values resolve from the Dockerfile directory: absolute paths stay absolute; `./`, `../`, and bare relative paths are resolved against that directory and must exist before build. Values that look like URI/special forms (`scheme://...`, `target:...`, Git-style `user@host:path`) pass through unchanged. Named contexts require BuildKit, which docker-booster always enables (see below).
+- `#context:` is build-time only and maps directly to Docker BuildKit named contexts: `#context: name=value` becomes `docker build --build-context name=value`. Multiple directives accumulate. The parser splits only on the first `=`, trims outer whitespace around the name and value, validates only the name (`[a-z_][a-z0-9_.-]*`), and passes the value through a bash array without shell evaluation. Local values resolve from the Dockerfile directory: absolute paths stay absolute; `./`, `../`, and bare relative paths are resolved against that directory and must exist before build. Values that look like URI/special forms (`scheme://...`, `target:...`, Git-style `user@host:path`) pass through unchanged. Named contexts require BuildKit, which run-dockerfile always enables (see below).
 - `#option:` takes one Docker option per directive line. The parser strips the directive prefix, trims trailing whitespace, splits once at the first whitespace, and passes the first token plus the entire remaining text as two bash-array arguments. This keeps common forms like `#option: --cpus 1` backward compatible while allowing option values with spaces, e.g. `#option: -v /tmp/my cache:/cache` and `#option: -e FLAGS=--mode fast`. Boolean flags such as `#option: --read-only` are single-token directives; adding a value to a known boolean flag is rejected.
 - **Default behavior** (no `#mount:` directive): Try `.git` first, fall back to `pwd` (no default $HOME exposure)
 
@@ -71,13 +71,13 @@ The script operates in two modes based on `$0`:
   Preserved env vars are carried across the `su` privilege drop as positional parameters
   (`set -- "$var=$val" "$@"`), so values containing spaces survive intact.
 
-User/group mapping preserves host username, UID, and GID. Group-name preservation is best-effort: if the host group name already exists in the container with a different GID, docker-booster creates `${groupname}_${gid}`; if that fallback name also exists with a different GID, it tries `${groupname}_${gid}_a` through `${groupname}_${gid}_z` before failing clearly. If another image group already has the host GID, both group names may share that numeric GID, and reverse lookups such as `id -gn` may report the image's first matching group name. The host user is mapped by **identity, not just name**: the image's existing user is reused only when it matches the host on name, UID *and* primary GID; if the image ships a user with the same name but a different UID/GID, the container instead runs as a distinct user `${username}_${uid}` carrying the host UID/GID (so bind-mounted files stay accessible). If that fallback username also exists with a different UID/GID, docker-booster tries `${username}_${uid}_a` through `${username}_${uid}_z` before failing. The `su` target and any `#sudo:` sudoers entry use this resolved user.
+User/group mapping preserves host username, UID, and GID. Group-name preservation is best-effort: if the host group name already exists in the container with a different GID, run-dockerfile creates `${groupname}_${gid}`; if that fallback name also exists with a different GID, it tries `${groupname}_${gid}_a` through `${groupname}_${gid}_z` before failing clearly. If another image group already has the host GID, both group names may share that numeric GID, and reverse lookups such as `id -gn` may report the image's first matching group name. The host user is mapped by **identity, not just name**: the image's existing user is reused only when it matches the host on name, UID *and* primary GID; if the image ships a user with the same name but a different UID/GID, the container instead runs as a distinct user `${username}_${uid}` carrying the host UID/GID (so bind-mounted files stay accessible). If that fallback username also exists with a different UID/GID, run-dockerfile tries `${username}_${uid}_a` through `${username}_${uid}_z` before failing. The `su` target and any `#sudo:` sudoers entry use this resolved user.
 
 The script bind-mounts **itself** into the container at `/bin/user-command` **read-only** (`-v "${real_self}:/bin/user-command:ro"`). The container starts as root before dropping to the mapped user, so the read-only flag prevents a container from overwriting the host script through that mount (regression-tested by `tests/0032`). The image tag is the container **directory name**, so it is validated up front against `^[a-z0-9][a-z0-9._-]*$`; an invalid name (e.g. containing uppercase) fails with an actionable message instead of a cryptic `docker build` "repository name must be lowercase" error (regression-tested by `tests/0033`).
 
-`#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/docker-booster-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the host side waits up to 30 seconds for each port file before failing. The shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
+`#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/run-dockerfile-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the host side waits up to 30 seconds for each port file before failing. The shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
 
-The script always enables Docker BuildKit (`export DOCKER_BUILDKIT=1` before `docker build`) — the modern build path (the engine default since Docker 23.0) and a prerequisite for `RUN --mount`, cache mounts, build secrets, and named contexts. docker-booster assumes BuildKit is present and does not support the legacy builder; the override is forced on unconditionally, so a pre-set `DOCKER_BUILDKIT=0` in the environment is ignored.
+The script always enables Docker BuildKit (`export DOCKER_BUILDKIT=1` before `docker build`) — the modern build path (the engine default since Docker 23.0) and a prerequisite for `RUN --mount`, cache mounts, build secrets, and named contexts. run-dockerfile assumes BuildKit is present and does not support the legacy builder; the override is forced on unconditionally, so a pre-set `DOCKER_BUILDKIT=0` in the environment is ignored.
 
 ### Smart Rebuild Detection
 
@@ -85,7 +85,7 @@ The script implements hash-based rebuild detection:
 - Calculates a SHA-256 hash of the build context (excluding `.git/`, `*.swp`) via `compute_context_hash()`
 - Preferred path uses a **deterministic GNU `tar` stream** (`--sort=name --mtime=... --owner=0 --group=0 --numeric-owner`) piped to the host SHA-256 helper. Hashing the archive (not just concatenated content) folds each entry's **path, mode, and symlink target** into the fingerprint, so a rename or `chmod` that changes the built image triggers a rebuild; `mtime`/owner are normalized so unrelated metadata churn does not.
 - Falls back to a portable metadata manifest when GNU `tar` is unavailable (e.g. stock macOS). The manifest sorts context entries and hashes each entry's path, type, mode, and either file-content digest or symlink target, so pure renames, chmod changes, and symlink retargets are still detected.
-- Stores hash as Docker image label: `docker-booster.context-hash`
+- Stores hash as Docker image label: `run-dockerfile.context-hash`
 - On subsequent runs, compares current hash with label from existing image
 - Named-context contents referenced by `#context:` are not included in this hash. The directive line itself remains in the Dockerfile/main-context hash, so changing `#context:` values triggers rebuilds, but changing only files inside a named context requires `docker rmi <image-name>` or another forced rebuild.
 - Skips rebuild if hashes match, dramatically speeding up development workflow
@@ -99,9 +99,9 @@ The script implements hash-based rebuild detection:
 
 ### Verbose Mode
 
-The script is quiet by default, suppressing informational messages during normal operation. Set `DOCKER_BOOSTER_VERBOSE=1` in the environment to enable them; only the literal value `1` is treated as enabled.
+The script is quiet by default, suppressing informational messages during normal operation. Set `RUN_DOCKERFILE_VERBOSE=1` in the environment to enable them; only the literal value `1` is treated as enabled.
 
-- `DOCKER_BOOSTER_VERBOSE` environment variable controls verbosity (0=quiet, 1=verbose; other values are quiet)
+- `RUN_DOCKERFILE_VERBOSE` environment variable controls verbosity (0=quiet, 1=verbose; other values are quiet)
 - `info()` helper function outputs to stderr only when verbose mode is enabled
 - Messages suppressed by default (runtime info):
   - Mount directive resolution ("Mount directive: Using home/pwd/git directory...")
@@ -132,7 +132,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `run` - Symlink to `../../build-and-run`
 - `test.sh` - Test script (exit 0 = pass, non-zero = fail)
 
-**Note:** Tests use a special structure (inside `tests/` directory) for testing purposes. The recommended user pattern is to place containers in a `containers/` directory at the project root, not inside the `docker-booster/` submodule. See README.md "Project Structure" section for details.
+**Note:** Tests use a special structure (inside `tests/` directory) for testing purposes. The recommended user pattern is to place containers in a `containers/` directory at the project root, not inside the `run-dockerfile/` submodule. See README.md "Project Structure" section for details.
 
 ### Test Cases
 
@@ -163,13 +163,13 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0025_copy_home_chown_scope` - Tests `#copy.home:` ownership fix is scoped to copied entries (a root-owned decoy in `$HOME` keeps its ownership; no recursive `chown -R`)
 - `0026_user_mapping_uid_conflict` - Tests an image user with the host's username but a different UID is not reused; container runs with the host UID/GID
 - `0027_context_directive` - Tests `#context:` named contexts (local path with spaces, no auto-rebuild on named-context-only changes, forced rebuild, missing path error, pass-through image context, invalid name)
-- `0028_directive_location` - Tests known docker-booster directives after line 20 fail with a clear error instead of being silently ignored
+- `0028_directive_location` - Tests known run-dockerfile directives after line 20 fail with a clear error instead of being silently ignored
 - `0029_readme_examples` - Tests indexed README Quick Start, command-line option, and Dockerfile directive samples by extracting them into a temporary project (including the "Non-interactive installers" `expect` sample, which is driven against a stand-in interactive `hello-installer.run` fixture so the heredoc `expect` script stays verified)
 - `0030_http_static_multiple` - Tests two `#http.static:` directives each serve their own directory (per-server port files, no stale-port mismap) and leave no port files behind
 - `0031_env_multi_var` - Tests every variable on a multi-variable `ENV` line is carried into `DOCKER_PRESERVE_ENV`, not just the first
 - `0032_user_command_readonly` - Tests `/bin/user-command` is bind-mounted read-only (checked via `/proc/self/mountinfo`)
 - `0033_invalid_image_name` - Tests a container directory name that is not a valid Docker image name fails early with a clear message
-- `0034_verbose_nonnumeric` - Tests a non-numeric `DOCKER_BOOSTER_VERBOSE` value does not make `info()` emit a shell "integer expression expected" error
+- `0034_verbose_nonnumeric` - Tests a non-numeric `RUN_DOCKERFILE_VERBOSE` value does not make `info()` emit a shell "integer expression expected" error
 - `0035_env_name_injection` - Tests a command-line `-e` whose variable name embeds shell metacharacters is rejected at the container-side `eval` sink, not executed
 - `0036_unset_user_env` - Tests the host username is resolved from `id -un` (not the `$USER` env var), so the user is mapped correctly when `$USER` is unset and a stale `$USER` does not leak into the mapping
 - `0037_option_inherit_env` - Tests the inherit form `#option: -e VAR` (no `=value`) is added to the ENV-preserve list like the command-line `-e VAR`; the decisive check is a variable unset on the host becoming defined inside the container

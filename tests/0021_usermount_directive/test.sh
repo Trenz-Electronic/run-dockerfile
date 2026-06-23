@@ -15,17 +15,17 @@ set -e
 fail=0
 
 # Unique test directory names to avoid conflicts
-TESTDIR1="$HOME/.docker-booster-test-0021-$$"
-TESTDIR2="$HOME/.docker-booster-test-0021-multi-$$"
+TESTDIR1="$HOME/.run-dockerfile-test-0021-$$"
+TESTDIR2="$HOME/.run-dockerfile-test-0021-multi-$$"
 # Exported so build-and-run can expand it inside a #usermount: directive (Test 6).
 # Deliberately contains a space.
-export DB_SPACE_DIR="$HOME/.docker-booster spacetest-0021-$$"
+export DB_SPACE_DIR="$HOME/.run-dockerfile spacetest-0021-$$"
 
 # Cleanup function
 cleanup() {
     rm -rf "$TESTDIR1" "$TESTDIR2" "$DB_SPACE_DIR"
     rm -rf test_create test_existing test_multiple test_envvar test_injection test_space
-    rm -f "$HOME"/.docker-booster-pwned-0021-*
+    rm -f "$HOME"/.run-dockerfile-pwned-0021-*
     docker rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi test_injection test_space 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -147,12 +147,12 @@ mkdir -p test_envvar
 cd test_envvar
 # Use literal $HOME in Dockerfile (will be expanded by build-and-run)
 cat > Dockerfile <<'EOF'
-#usermount: $HOME/.docker-booster-envtest-0021
+#usermount: $HOME/.run-dockerfile-envtest-0021
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
 
-output=$(./run sh -c "test -d \$HOME/.docker-booster-envtest-0021 && echo ENVVAR_OK" 2>&1)
+output=$(./run sh -c "test -d \$HOME/.run-dockerfile-envtest-0021 && echo ENVVAR_OK" 2>&1)
 if echo "$output" | grep -q "ENVVAR_OK"; then
     echo "PASS: Environment variable expanded correctly"
 else
@@ -162,13 +162,13 @@ else
 fi
 
 # Cleanup the envtest dir
-rm -rf "$HOME/.docker-booster-envtest-0021"
+rm -rf "$HOME/.run-dockerfile-envtest-0021"
 cd ..
 
 echo ""
 echo "=== Test 5: Command substitution must NOT execute on host ==="
 rm -rf "$TESTDIR1"
-MARKER="$HOME/.docker-booster-pwned-0021-$$"
+MARKER="$HOME/.run-dockerfile-pwned-0021-$$"
 rm -f "$MARKER"
 mkdir -p test_injection
 cd test_injection

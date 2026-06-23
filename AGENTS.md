@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`docker-booster` is intentionally small. The main product is the Bash script
+`run-dockerfile` is intentionally small. The main product is the Bash script
 [`build-and-run`](build-and-run), which is normally symlinked as `run` beside a
 project Dockerfile. User-facing documentation lives in [`README.md`](README.md);
 implementation notes and architectural constraints live in [`CLAUDE.md`](CLAUDE.md).

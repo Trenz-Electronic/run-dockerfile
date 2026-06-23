@@ -1,11 +1,11 @@
-# docker-booster
+# run-dockerfile
 
-[![Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test.yml)
-[![macOS Test Suite](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/docker-booster/actions/workflows/test-macos.yml)
+[![Test Suite](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test.yml)
+[![macOS Test Suite](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test-macos.yml)
 
 A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone Docker command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
 
-docker-booster handles the common setup work for containerized development:
+run-dockerfile handles the common setup work for containerized development:
 - **User/group mapping** - No more permission headaches with mounted volumes
 - **Volume mounting** - Your project files are automatically available
 - **Image management** - Containers are built and rebuilt automatically as needed
@@ -32,19 +32,19 @@ Follow these steps:
    ```
    The root `Makefile` is just a stand-in build target so the `make` command in step 4 has something to run — replace it with your real project.
 
-2. **Add docker-booster** as a submodule to your project (if your project is not a git repository yet, run `git init` first):
-   <!-- readme-sample: quickstart-02-add-docker-booster -->
+2. **Add run-dockerfile** as a submodule to your project (if your project is not a git repository yet, run `git init` first):
+   <!-- readme-sample: quickstart-02-add-run-dockerfile -->
    ```bash
-   git submodule add https://github.com/Trenz-Electronic/docker-booster.git docker-booster
+   git submodule add https://github.com/Trenz-Electronic/run-dockerfile.git run-dockerfile
    ```
    Or add it by any other compatible method.
 
 3. **Create a symlink** to the build-and-run script:
    <!-- readme-sample: quickstart-03-create-run-symlink -->
    ```bash
-   (cd containers/my-container && ln -s ../../docker-booster/build-and-run run)
+   (cd containers/my-container && ln -s ../../run-dockerfile/build-and-run run)
    ```
-   This is the crucial step. The `run` symlink must live next to the Dockerfile; docker-booster uses that directory as the Docker context.
+   This is the crucial step. The `run` symlink must live next to the Dockerfile; run-dockerfile uses that directory as the Docker context.
 
 4. **Run commands** inside the container without long Docker command lines:
    <!-- readme-sample: quickstart-04-run-commands -->
@@ -61,7 +61,7 @@ Follow these steps:
 
 The image is built automatically on the first run and rebuilt when the Dockerfile's build context changes.
 
-**Important:** Create your container directories in your project (not inside the `docker-booster/` submodule) so they can be version-controlled with your code.
+**Important:** Create your container directories in your project (not inside the `run-dockerfile/` submodule) so they can be version-controlled with your code.
 
 ## Docker options on the command line
 
@@ -76,7 +76,7 @@ Pass Docker run options directly on the command line:
 ./containers/my-container/run --cpus 1 --memory 512m true              # Resource limits
 ```
 
-**Forwarding environment variables:** `-e`/`--env` accepts two forms. `-e NAME=value` sets the variable to a literal value inside the container; `-e NAME` (no `=value`) forwards `NAME`'s *current value from your host environment* — handy for values you would rather not hard-code, such as `-e DISPLAY` for X11. Either way, docker-booster also re-exports the variable across the container's internal `su` privilege drop, so it stays set for your command. The same two forms work in the Dockerfile via [`#option:`](#docker-options-in-the-dockerfile) (`#option: -e NAME=value` and `#option: -e NAME`).
+**Forwarding environment variables:** `-e`/`--env` accepts two forms. `-e NAME=value` sets the variable to a literal value inside the container; `-e NAME` (no `=value`) forwards `NAME`'s *current value from your host environment* — handy for values you would rather not hard-code, such as `-e DISPLAY` for X11. Either way, run-dockerfile also re-exports the variable across the container's internal `su` privilege drop, so it stays set for your command. The same two forms work in the Dockerfile via [`#option:`](#docker-options-in-the-dockerfile) (`#option: -e NAME=value` and `#option: -e NAME`).
 
 **Supported command-line options:**
 - `-e`/`--env` - Environment variables
@@ -92,16 +92,16 @@ Pass Docker run options directly on the command line:
 - `--privileged`, `--read-only` - Supported boolean flags
 - `-h`/`--help` - Show usage
 
-**Important:** only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option docker-booster does not recognize, put it in the Dockerfile with `#option:` instead.
+**Important:** only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option run-dockerfile does not recognize, put it in the Dockerfile with `#option:` instead.
 
 **Environment variables:**
-- `DOCKER_BOOSTER_VERBOSE=1` - Show informational messages (mount directives, file collection, etc.); only the literal value `1` enables verbose output.
+- `RUN_DOCKERFILE_VERBOSE=1` - Show informational messages (mount directives, file collection, etc.); only the literal value `1` enables verbose output.
 
 ## Dockerfile directives
 
-docker-booster extends Dockerfiles with special comment directives.
+run-dockerfile extends Dockerfiles with special comment directives.
 
-All docker-booster directives must appear in the first 20 lines of the Dockerfile. Both `#directive:` and `# directive:` forms are accepted; examples below use the project's conventional spelling for each directive.
+All run-dockerfile directives must appear in the first 20 lines of the Dockerfile. Both `#directive:` and `# directive:` forms are accepted; examples below use the project's conventional spelling for each directive.
 
 ### Docker options in the Dockerfile
 
@@ -134,14 +134,14 @@ To pass an environment variable, `#option: -e NAME=value` sets a literal value a
 
 ### Fine-tune volume mapping
 
-The default behavior of docker-booster is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behavior corresponds to `#mount: .git pwd`.
+The default behavior of run-dockerfile is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behavior corresponds to `#mount: .git pwd`.
 
 The `#mount:` directive accepts whitespace-separated keywords:
 - `.git` - Root of the git repository (searches upward from current directory)
 - `pwd` - Current working directory
 - `home` - Home directory — do not use with untrusted containers
 
-The keywords are tried in order and the first available directory is mounted; if none are available, docker-booster exits with an error.
+The keywords are tried in order and the first available directory is mounted; if none are available, run-dockerfile exits with an error.
 
 **Example**: Restrict container to git repository only, to avoid any security lapses:
 <!-- readme-sample: directive-02-mount -->
@@ -207,7 +207,7 @@ FROM ubuntu:22.04
 
 Supported values: Any Docker platform string (e.g., `arm64`, `amd64`, `linux/arm/v7`, `linux/arm64`)
 
-This feature is useful when you want to build inside an emulated target-architecture environment instead of setting up a cross-compiler toolchain. docker-booster passes the platform to Docker; for foreign architectures, Docker must already be configured with the required binfmt/QEMU support. Builds under emulation can be significantly slower.
+This feature is useful when you want to build inside an emulated target-architecture environment instead of setting up a cross-compiler toolchain. run-dockerfile passes the platform to Docker; for foreign architectures, Docker must already be configured with the required binfmt/QEMU support. Builds under emulation can be significantly slower.
 
 ### HTTP static file serving
 
@@ -265,11 +265,11 @@ FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y sudo
 ```
 
-With `#sudo: all`, docker-booster creates a sudoers entry allowing passwordless sudo for the container user. Without this directive, even if sudo is installed, it won't be configured for the container user.
+With `#sudo: all`, run-dockerfile creates a sudoers entry allowing passwordless sudo for the container user. Without this directive, even if sudo is installed, it won't be configured for the container user.
 
 ### GUI applications (X11)
 
-docker-booster can run X11 applications with minimal configuration:
+run-dockerfile can run X11 applications with minimal configuration:
 
 ```dockerfile
 # X11 Application Container
@@ -373,7 +373,7 @@ On hosts that provide `/etc/localtime`, you can also use the host timezone file 
 
 Vendor tool installers are often interactive: they page through a license and wait for you to type `yes`. A
 `docker build` has no terminal attached, so such an installer stalls or aborts.
-docker-booster only delivers the installer into the build (see
+run-dockerfile only delivers the installer into the build (see
 [HTTP static file serving](#http-static-file-serving) and
 [BuildKit named contexts](#buildkit-named-contexts)); running it unattended is
 ordinary Dockerfile work.
@@ -382,7 +382,7 @@ Prefer the installer's own unattended flag whenever it has one (for example
 `--mode unattended`, `--accept-license`, or `-a`). When the installer instead
 pages a license (waiting for a keypress) or asks conditional questions that a
 fixed set of answers cannot satisfy, drive it with `expect`. Because
-docker-booster always enables BuildKit, the `expect` script can be written
+run-dockerfile always enables BuildKit, the `expect` script can be written
 inline with a `COPY` heredoc instead of shipping a separate file:
 
 <!-- readme-sample: installer-01-expect -->
@@ -421,27 +421,27 @@ installer and its prompts.
 
 ## Project structure
 
-docker-booster is flexible about where you place your container directories. The example structure, which is in no way enforced, is:
+run-dockerfile is flexible about where you place your container directories. The example structure, which is in no way enforced, is:
 
 ```
 my-project/
-├── docker-booster/          # git submodule
+├── run-dockerfile/          # git submodule
 │   ├── build-and-run
 │   └── ...
 ├── containers/              # your container definitions
 │   ├── build-env/
 │   │   ├── Dockerfile
-│   │   └── run -> ../../docker-booster/build-and-run
+│   │   └── run -> ../../run-dockerfile/build-and-run
 │   └── test-env/
 │       ├── Dockerfile
-│       └── run -> ../../docker-booster/build-and-run
+│       └── run -> ../../run-dockerfile/build-and-run
 └── src/
     └── ...
 ```
 
-As long as each container directory's `run` symlink points to `docker-booster/build-and-run`, it works.
+As long as each container directory's `run` symlink points to `run-dockerfile/build-and-run`, it works.
 
-**Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); docker-booster checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
+**Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); run-dockerfile checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
 
 ## Requirements
 
@@ -449,7 +449,7 @@ As long as each container directory's `run` symlink points to `docker-booster/bu
 
 - Linux or macOS with Docker and bash.
 - For foreign-architecture `# platform:` builds/runs, Docker must have binfmt/QEMU support configured for the requested platform.
-- GNU `tar` is optional; when unavailable, docker-booster uses a portable metadata-manifest hash for rebuild detection.
+- GNU `tar` is optional; when unavailable, run-dockerfile uses a portable metadata-manifest hash for rebuild detection.
 - `python3` — only when using `#http.static:`.
 - Linux `ip` command from iproute2 — only when using `#http.static:` on Linux.
 
@@ -457,7 +457,7 @@ As long as each container directory's `run` symlink points to `docker-booster/bu
 
 - `/bin/sh`, `su`, and writable `/etc/passwd` and `/etc/group` — users and groups are created by appending entries directly, so no `useradd` is needed. Standard Debian, Ubuntu, Fedora and Alpine base images all qualify; scratch and distroless images do not.
 - `tar` with gzip support — only when using `#copy.home:` (the files are delivered as a tarball extracted inside the container).
-- `sudo` — only when using `#sudo: all`; docker-booster creates `/etc/sudoers.d/` if it is missing.
+- `sudo` — only when using `#sudo: all`; run-dockerfile creates `/etc/sudoers.d/` if it is missing.
 
 ## Technical details
 
@@ -471,7 +471,7 @@ As long as each container directory's `run` symlink points to `docker-booster/bu
 
 ## Security considerations
 
-docker-booster has **secure defaults for trusted Dockerfiles**:
+run-dockerfile has **secure defaults for trusted Dockerfiles**:
 
 - ✅ No $HOME exposure - SSH keys, GPG keys, AWS credentials stay protected
 - ✅ Git-aware - automatically mounts only your repository root
@@ -494,9 +494,9 @@ FROM ubuntu:22.04
 
 The default behavior helps avoid accidental host exposure in CI/CD pipelines: nothing outside the project directory is exposed to the container unless a trusted Dockerfile or command line explicitly asks for it.
 
-When using `#http.static:`, docker-booster briefly starts a temporary HTTP server on a random host port during the image build and serves files only under a high-entropy temporary URL prefix passed through `HTTP_<KEY>`. Treat that URL as visible to other users who can inspect build arguments or process output while the build is running; serve only trusted, non-secret files.
+When using `#http.static:`, run-dockerfile briefly starts a temporary HTTP server on a random host port during the image build and serves files only under a high-entropy temporary URL prefix passed through `HTTP_<KEY>`. Treat that URL as visible to other users who can inspect build arguments or process output while the build is running; serve only trusted, non-secret files.
 
-**Trust model:** docker-booster is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#option:` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#usermount:` creates directories on the host, and `#copy.home:` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
+**Trust model:** run-dockerfile is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#option:` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#usermount:` creates directories on the host, and `#copy.home:` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
 
 ## Testing
 

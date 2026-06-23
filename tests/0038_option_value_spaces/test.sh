@@ -4,7 +4,7 @@
 set -e
 
 fail=0
-mount_dir="/tmp/docker booster option spaces-$$"
+mount_dir="/tmp/run-dockerfile option spaces-$$"
 
 cleanup() {
     rm -rf "$mount_dir"

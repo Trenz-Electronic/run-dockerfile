@@ -41,7 +41,7 @@ if ! echo "$output" | grep -F "$marker_b" >/dev/null; then
 fi
 
 # Temp port files must not leak after the build (finding 2).
-leftover=$(ls /tmp/docker-booster-http-port-*.txt 2>/dev/null || true)
+leftover=$(ls /tmp/run-dockerfile-http-port-*.txt 2>/dev/null || true)
 if [ -n "$leftover" ]; then
     echo "FAIL: HTTP port files leaked in /tmp:"
     echo "$leftover"

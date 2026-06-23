@@ -7,7 +7,7 @@ fail=0
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$test_dir/../.." && pwd)"
 readme="$repo_root/README.md"
-workspace="${TMPDIR:-/tmp}/docker-booster-readme-$$"
+workspace="${TMPDIR:-/tmp}/run-dockerfile-readme-$$"
 project="$workspace/project"
 original_home="$HOME"
 
@@ -72,7 +72,7 @@ prepare_container_from_sample() {
 
     mkdir -p "$container_dir"
     write_sample_file "$sample_id" "$container_dir/Dockerfile"
-    ln -sf ../../docker-booster/build-and-run "$container_dir/run"
+    ln -sf ../../run-dockerfile/build-and-run "$container_dir/run"
 }
 
 prepare_basic_container() {
@@ -83,7 +83,7 @@ prepare_basic_container() {
     cat > "$container_dir/Dockerfile" <<'EOF'
 FROM buildpack-deps:bookworm
 EOF
-    ln -sf ../../docker-booster/build-and-run "$container_dir/run"
+    ln -sf ../../run-dockerfile/build-and-run "$container_dir/run"
 }
 
 assert_dockerfile_directives_within_first_20() {
@@ -92,7 +92,7 @@ assert_dockerfile_directives_within_first_20() {
 
     write_sample_file "$sample_id" "$tmp_file"
     if awk 'NR > 20 && /^[[:space:]]*#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):[[:space:]]*/ { found = 1 } END { exit found ? 0 : 1 }' "$tmp_file"; then
-        echo "FAIL: README sample '$sample_id' has a docker-booster directive after line 20"
+        echo "FAIL: README sample '$sample_id' has a run-dockerfile directive after line 20"
         fail=1
     else
         echo "PASS: README sample '$sample_id' keeps directives in the first 20 lines"
@@ -153,14 +153,14 @@ else
 fi
 
 echo ""
-echo "=== Substitute local docker-booster checkout for README submodule command ==="
-submodule_sample=$(extract_sample quickstart-02-add-docker-booster)
+echo "=== Substitute local run-dockerfile checkout for README submodule command ==="
+submodule_sample=$(extract_sample quickstart-02-add-run-dockerfile)
 booster_dir=$(printf '%s\n' "$submodule_sample" | awk '/git submodule add / {print $NF; exit}')
-if [ "$booster_dir" = "docker-booster" ]; then
+if [ "$booster_dir" = "run-dockerfile" ]; then
     ln -s "$repo_root" "$project/$booster_dir"
-    echo "PASS: substituted local docker-booster symlink for submodule destination"
+    echo "PASS: substituted local run-dockerfile symlink for submodule destination"
 else
-    echo "FAIL: could not determine docker-booster destination from README submodule sample: '$submodule_sample'"
+    echo "FAIL: could not determine run-dockerfile destination from README submodule sample: '$submodule_sample'"
     fail=1
 fi
 
@@ -186,7 +186,7 @@ echo "=== Run Quick Start command sample ==="
 
 echo ""
 echo "=== Static README checks for known shell-example pitfalls ==="
-assert_readme_contains "(cd containers/my-container && ln -s ../../docker-booster/build-and-run run)"
+assert_readme_contains "(cd containers/my-container && ln -s ../../run-dockerfile/build-and-run run)"
 assert_readme_contains "./containers/my-container/run sh -lc 'make -j\$(nproc)'"
 assert_readme_not_contains "./containers/my-container/run make -j\$(nproc)"
 
@@ -231,7 +231,7 @@ else
 fi
 
 prepare_container_from_sample directive-02-mount readme-mount
-output=$(cd "$project" && DOCKER_BOOSTER_VERBOSE=1 ./containers/readme-mount/run pwd 2>&1) || {
+output=$(cd "$project" && RUN_DOCKERFILE_VERBOSE=1 ./containers/readme-mount/run pwd 2>&1) || {
     echo "FAIL: #mount: README sample failed"
     fail=1
     output=""

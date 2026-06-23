@@ -12,7 +12,7 @@ set -e
 fail=0
 
 # Enable verbose mode to see mount directive messages
-export DOCKER_BOOSTER_VERBOSE=1
+export RUN_DOCKERFILE_VERBOSE=1
 
 # Clean up any existing images
 docker rmi -f 0018_mount_pwd 2>/dev/null || true

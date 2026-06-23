@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test runner for docker-booster
+# Test runner for run-dockerfile
 # Usage: run [--no-cleanup] [--cleanup | --all | <test-prefix>...]
 
 set -e

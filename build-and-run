@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# docker-booster - Docker Container Manager with Auto-build
-# https://github.com/Trenz-Electronic/docker-booster
+# run-dockerfile - Docker Container Manager with Auto-build
+# https://github.com/Trenz-Electronic/run-dockerfile
 #
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025 Trenz Electronic GmbH
@@ -31,7 +31,7 @@
 # 3. Symlink this script as "run" next to the Dockerfile. The symlink target is
 #    deliberately NOT followed when locating the container directory, so "run"
 #    must live beside the Dockerfile it builds:
-#    (cd containers/my-container && ln -s ../../docker-booster/build-and-run run)
+#    (cd containers/my-container && ln -s ../../run-dockerfile/build-and-run run)
 #
 # 4. (Optional) Add a platform directive to the Dockerfile for cross-platform builds:
 #    # platform: arm64
@@ -65,14 +65,14 @@
 
 set -e
 
-# Verbose mode: set DOCKER_BOOSTER_VERBOSE=1 in environment to enable
-DOCKER_BOOSTER_VERBOSE=${DOCKER_BOOSTER_VERBOSE:-0}
+# Verbose mode: set RUN_DOCKERFILE_VERBOSE=1 in environment to enable
+RUN_DOCKERFILE_VERBOSE=${RUN_DOCKERFILE_VERBOSE:-0}
 
 # Print informational message only in verbose mode
 info() {
-  # Compare as a string: DOCKER_BOOSTER_VERBOSE is a flag, and a non-numeric
+  # Compare as a string: RUN_DOCKERFILE_VERBOSE is a flag, and a non-numeric
   # value (e.g. "true") must not make `[ ... -eq 1 ]` emit a shell error.
-  if [ "$DOCKER_BOOSTER_VERBOSE" = 1 ]; then
+  if [ "$RUN_DOCKERFILE_VERBOSE" = 1 ]; then
     >&2 echo "$@"
   fi
 }
@@ -346,7 +346,7 @@ fi
 
 print_usage() {
   cat <<'EOF'
-Usage: ./run [docker-booster options] COMMAND [ARGS...]
+Usage: ./run [run-dockerfile options] COMMAND [ARGS...]
 
 Supported command-line options:
   -e, --env VAR=VALUE         pass an environment variable
@@ -688,7 +688,7 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
-# Validate that known docker-booster directives are not hidden below the parse
+# Validate that known run-dockerfile directives are not hidden below the parse
 # window. Silently ignoring a late directive would make the Dockerfile misleading.
 if [ -f "$dir/Dockerfile" ]; then
   MISPLACED_DIRECTIVE=$(awk '
@@ -703,7 +703,7 @@ if [ -f "$dir/Dockerfile" ]; then
   if [ -n "$MISPLACED_DIRECTIVE" ]; then
     directive_line=${MISPLACED_DIRECTIVE%%:*}
     directive_name=${MISPLACED_DIRECTIVE#*:}
-    >&2 echo "ERROR: docker-booster directive '${directive_name}' found on line ${directive_line}; directives must appear in the first 20 lines of Dockerfile"
+    >&2 echo "ERROR: run-dockerfile directive '${directive_name}' found on line ${directive_line}; directives must appear in the first 20 lines of Dockerfile"
     exit 1
   fi
 fi
@@ -819,7 +819,7 @@ else
 fi
 
 # Optimized inspect: get architecture and context hash in one call
-INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
+INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
 
 if [ -n "$INSPECT_DATA" ]; then
   IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
@@ -932,7 +932,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
 
     # Always use BuildKit - it is the modern Docker build path (the engine default
     # since Docker 23.0) and is required for `RUN --mount`, cache mounts, build
-    # secrets, and named contexts. docker-booster assumes BuildKit is present and
+    # secrets, and named contexts. run-dockerfile assumes BuildKit is present and
     # does not support the legacy builder, so force it on unconditionally.
     export DOCKER_BUILDKIT=1
     info "Using BuildKit"
@@ -1059,7 +1059,7 @@ PYEOF
         # directive read the previous server's (stale) port before this server
         # had written its own, mapping the wrong directory to its build-arg.
         HTTP_SERVER_INDEX=$((HTTP_SERVER_INDEX + 1))
-        HTTP_PORT_FILE="/tmp/docker-booster-http-port-$$-${HTTP_SERVER_INDEX}.txt"
+        HTTP_PORT_FILE="/tmp/run-dockerfile-http-port-$$-${HTTP_SERVER_INDEX}.txt"
         rm -f "$HTTP_PORT_FILE"
         HTTP_PORT_FILES="$HTTP_PORT_FILES $HTTP_PORT_FILE"
 
@@ -1131,7 +1131,7 @@ EOF
     BUILD_CMD+=("${BUILD_CONTEXT_ARGS[@]}" "${BUILD_ARGS[@]}")
     # Add context hash label for change detection
     if [ -n "$CONTEXT_HASH" ]; then
-      BUILD_CMD+=(--label "docker-booster.context-hash=${CONTEXT_HASH}")
+      BUILD_CMD+=(--label "run-dockerfile.context-hash=${CONTEXT_HASH}")
     fi
     BUILD_CMD+=("$dir")
 
@@ -1147,7 +1147,7 @@ EOF
   fi
 
   # Update architecture after build (reuse optimized inspect format)
-  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "docker-booster.context-hash"}}' "${tag}" 2>/dev/null) || true
+  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
   if [ -n "$INSPECT_DATA" ]; then
     IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
   fi
@@ -1187,7 +1187,7 @@ cleanup_copy_home() {
 COPY_HOME_VARG=()
 COPY_HOME_TAR=""
 if [ ${#COPY_HOME_FILES[@]} -gt 0 ]; then
-  COPY_HOME_TAR="/tmp/docker-booster-home-files-$$.tar.gz"
+  COPY_HOME_TAR="/tmp/run-dockerfile-home-files-$$.tar.gz"
   trap cleanup_copy_home EXIT INT TERM
   cd "$HOME"
 

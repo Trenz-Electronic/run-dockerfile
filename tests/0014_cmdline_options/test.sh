@@ -22,7 +22,7 @@ else
 fi
 
 # Test -v volume mount
-test_file="/tmp/docker-booster-test-$$"
+test_file="/tmp/run-dockerfile-test-$$"
 echo "test_content_$$" > "$test_file"
 output=$(./run -v "$test_file:/test_mount:ro" cat /test_mount)
 rm -f "$test_file"

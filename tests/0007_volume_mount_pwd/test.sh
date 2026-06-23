@@ -3,7 +3,7 @@
 
 set -e
 
-marker=".docker-booster-test-$$"
+marker=".run-dockerfile-test-$$"
 expected="unique-marker-$$"
 
 # Create marker in PWD on host

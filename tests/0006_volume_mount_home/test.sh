@@ -3,7 +3,7 @@
 
 set -e
 
-marker="$HOME/.docker-booster-test-$$"
+marker="$HOME/.run-dockerfile-test-$$"
 expected="unique-marker-$$"
 
 # Create marker on host

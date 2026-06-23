@@ -1,6 +1,6 @@
 #!/bin/sh
 # Test: the host username is resolved from `id -un`, not the $USER environment
-# variable. docker-booster must map the user correctly even when $USER is unset
+# variable. run-dockerfile must map the user correctly even when $USER is unset
 # (cron, CI, `env -i`, minimal shells) and must NOT trust a stale/wrong $USER.
 #
 # Regression test for the fix that replaced "$USER" with "$(id -un)" in the
