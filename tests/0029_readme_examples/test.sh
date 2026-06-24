@@ -86,17 +86,24 @@ EOF
     ln -sf ../../run-dockerfile/build-and-run "$container_dir/run"
 }
 
-assert_dockerfile_directives_within_first_20() {
+assert_sample_uses_prefix() {
     sample_id="$1"
     tmp_file="$workspace/${sample_id}.Dockerfile"
 
     write_sample_file "$sample_id" "$tmp_file"
-    if awk 'NR > 20 && /^[[:space:]]*#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):[[:space:]]*/ { found = 1 } END { exit found ? 0 : 1 }' "$tmp_file"; then
-        echo "FAIL: README sample '$sample_id' has a run-dockerfile directive after line 20"
+    # The prefixed form is the documented, recommended syntax: every directive
+    # sample must use it, and none may show a deprecated unprefixed directive.
+    if ! grep -qE '^#run-dockerfile: ' "$tmp_file"; then
+        echo "FAIL: README sample '$sample_id' does not use the #run-dockerfile: prefix"
         fail=1
-    else
-        echo "PASS: README sample '$sample_id' keeps directives in the first 20 lines"
+        return
     fi
+    if grep -qE '^#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):' "$tmp_file"; then
+        echo "FAIL: README sample '$sample_id' still shows a deprecated unprefixed directive"
+        fail=1
+        return
+    fi
+    echo "PASS: README sample '$sample_id' uses the #run-dockerfile: prefix"
 }
 
 assert_readme_contains() {
@@ -484,7 +491,7 @@ else
 fi
 
 echo ""
-echo "=== Static Dockerfile directive sample checks ==="
+echo "=== Dockerfile directive samples use the #run-dockerfile: prefix ==="
 for sample_id in \
     directive-01-option \
     directive-01b-option-spaces \
@@ -500,7 +507,7 @@ for sample_id in \
     timezone-04-host-env-dockerfile \
     installer-01-expect
 do
-    assert_dockerfile_directives_within_first_20 "$sample_id"
+    assert_sample_uses_prefix "$sample_id"
 done
 assert_readme_contains "ARG HTTP_INSTALLER"
 

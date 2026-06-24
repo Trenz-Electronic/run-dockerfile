@@ -19,24 +19,30 @@ run-dockerfile is a single-script Docker workflow tool that automates image buil
 
 ## Dockerfile Directive Syntax
 
-The script parses special comment directives from Dockerfiles:
+The script parses special comment directives from Dockerfiles. The canonical form
+is a `#run-dockerfile:` prefix (with `#` at column 1) followed by the directive
+keyword and its value; prefixed directives may appear **anywhere** in the file.
+The older unprefixed spellings are **deprecated**: honored only in the first 20
+lines and reported with a one-time deprecation warning on stderr.
 
-| Directive | Location | Purpose |
-|-----------|----------|---------|
-| `# platform: <arch>` | First 20 lines | Cross-platform builds (arm64, amd64) |
-| `#mount: .git pwd home` | First 20 lines | Control volume mounting with FIRST-found semantics |
-| `#copy.home: <file>` | First 20 lines | Copy specific files from $HOME into container |
-| `#usermount: <path>` | First 20 lines | Mount directories with env var expansion (creates if missing) |
-| `#http.static: KEY=/path` | First 20 lines | Serve local dirs during build |
-| `#context: name=value` | First 20 lines | Pass BuildKit named contexts to `docker build` |
-| `#option: <docker-args>` | First 20 lines | Pass additional args to `docker run` |
-| `#sudo: all` | First 20 lines | Create sudoers entry for container user |
+| Directive (canonical) | Location | Deprecated form | Purpose |
+|-----------------------|----------|-----------------|---------|
+| `#run-dockerfile: platform <arch>` | Anywhere | `# platform:` (first 20) | Cross-platform builds (arm64, amd64) |
+| `#run-dockerfile: mount .git pwd home` | Anywhere | `#mount:` (first 20) | Control volume mounting with FIRST-found semantics |
+| `#run-dockerfile: copy.home <file>` | Anywhere | `#copy.home:` (first 20) | Copy specific files from $HOME into container |
+| `#run-dockerfile: usermount <path>` | Anywhere | `#usermount:` (first 20) | Mount directories with env var expansion (creates if missing) |
+| `#run-dockerfile: http.static KEY=/path` | Anywhere | `#http.static:` (first 20) | Serve local dirs during build |
+| `#run-dockerfile: context name=value` | Anywhere | `#context:` (first 20) | Pass BuildKit named contexts to `docker build` |
+| `#run-dockerfile: option <docker-args>` | Anywhere | `#option:` (first 20) | Pass additional args to `docker run` |
+| `#run-dockerfile: sudo all` | Anywhere | `#sudo:` (first 20) | Create sudoers entry for container user |
+
+**Directive normalization**: `build_directive_stream()` (one awk pass, run before any directive parsing) rewrites both spellings into a single canonical `#<keyword>: <value>` stream in Dockerfile order, which every parser then consumes instead of re-reading the Dockerfile. Prefixed lines (`^#run-dockerfile:` at column 1) are honored anywhere; a prefixed line with no whitespace after the colon, an empty/missing keyword, or an unknown keyword is a hard error (the prefix signals intent, so it is reported, not ignored). Unprefixed known directives in the first 20 lines are emitted verbatim and collected for the deprecation warning. Order is preserved so `#platform:` (first match) and `#sudo:` (last match) keep their meaning. Regression-tested by `tests/0043`.
 
 **Volume Mounting Control**:
 - `#mount:` accepts keywords: `.git` (git repo root), `pwd` (current directory), `home` (home directory)
 - FIRST-found semantics: checks keywords in order, uses first match
 - Multiple `#mount:` directives accumulate keywords
-- Known run-dockerfile directives after line 20 are an error rather than silently ignored.
+- The **deprecated unprefixed** form is honored only in the first 20 lines; a known unprefixed directive after line 20 is an error rather than silently ignored (the error message points at the `#run-dockerfile:` prefix as the way to place it anywhere). Prefixed directives are honored at any line.
 - `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data. Like `#usermount:`, it takes **exactly one path per directive line** (trimmed, parsed into a bash array), so filenames may contain spaces; use multiple `#copy.home:` lines for multiple files. After extraction, ownership is fixed **only** on the copied entries and the parent directories leading to them (driven by `tar tzf`, walking each member's ancestors) — never a recursive `chown -R` over `$HOME`, which could re-own a bind-mounted host home (`#mount: home`, or simply the project dir that usually lives under `$HOME`).
 - `#usermount:` takes **exactly one path per directive line** (the whole value after the colon, trimmed), so paths may contain spaces. Use multiple `#usermount:` lines for multiple paths — they accumulate. (Unlike `#mount:`, which whitespace-splits its keywords, the value is *not* split into several entries.)
 - `#context:` is build-time only and maps directly to Docker BuildKit named contexts: `#context: name=value` becomes `docker build --build-context name=value`. Multiple directives accumulate. The parser splits only on the first `=`, trims outer whitespace around the name and value, validates only the name (`[a-z_][a-z0-9_.-]*`), and passes the value through a bash array without shell evaluation. Local values resolve from the Dockerfile directory: absolute paths stay absolute; `./`, `../`, and bare relative paths are resolved against that directory and must exist before build. Values that look like URI/special forms (`scheme://...`, `target:...`, Git-style `user@host:path`) pass through unchanged. Named contexts require BuildKit, which run-dockerfile always enables (see below).
@@ -177,3 +183,5 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0039_user_group_fallback_collision` - Tests fallback user/group names retry with `_a` when `${name}_${id}` already exists with the wrong numeric identity
 - `0040_no_command` - Tests bare `./run` fails before container startup without exposing internal `user-command` usage
 - `0041_missing_option_value` - Tests split-form docker run options fail clearly when their required value is missing
+- `0042_help_usage` - Tests host-side `--help`/usage exits successfully without requiring Docker
+- `0043_directive_prefix` - Tests the `#run-dockerfile:` directive prefix (honored anywhere incl. after line 20, whitespace required after the colon, `#` must be column 1, unknown keyword is a hard error, the deprecated unprefixed form still works and emits a deprecation warning, old and new forms accumulate)

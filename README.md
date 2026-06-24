@@ -76,7 +76,7 @@ Pass Docker run options directly on the command line:
 ./containers/my-container/run --cpus 1 --memory 512m true              # Resource limits
 ```
 
-**Forwarding environment variables:** `-e`/`--env` accepts two forms. `-e NAME=value` sets the variable to a literal value inside the container; `-e NAME` (no `=value`) forwards `NAME`'s *current value from your host environment* — handy for values you would rather not hard-code, such as `-e DISPLAY` for X11. Either way, run-dockerfile also re-exports the variable across the container's internal `su` privilege drop, so it stays set for your command. The same two forms work in the Dockerfile via [`#option:`](#docker-options-in-the-dockerfile) (`#option: -e NAME=value` and `#option: -e NAME`).
+**Forwarding environment variables:** `-e`/`--env` accepts two forms. `-e NAME=value` sets the variable to a literal value inside the container; `-e NAME` (no `=value`) forwards `NAME`'s *current value from your host environment* — handy for values you would rather not hard-code, such as `-e DISPLAY` for X11. Either way, run-dockerfile also re-exports the variable across the container's internal `su` privilege drop, so it stays set for your command. The same two forms work in the Dockerfile via [`#run-dockerfile: option`](#docker-options-in-the-dockerfile) (`#run-dockerfile: option -e NAME=value` and `#run-dockerfile: option -e NAME`).
 
 **Supported command-line options:**
 - `-e`/`--env` - Environment variables
@@ -92,7 +92,7 @@ Pass Docker run options directly on the command line:
 - `--privileged`, `--read-only` - Supported boolean flags
 - `-h`/`--help` - Show usage
 
-**Important:** only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option run-dockerfile does not recognize, put it in the Dockerfile with `#option:` instead.
+**Important:** only the above listed options are supported on the command line. Anything else — including an unrecognized `--flag` — is treated as the start of the command to run inside the container, not as a `docker run` option. To pass an option run-dockerfile does not recognize, put it in the Dockerfile with `#run-dockerfile: option` instead.
 
 **Environment variables:**
 - `RUN_DOCKERFILE_VERBOSE=1` - Show informational messages (mount directives, file collection, etc.); only the literal value `1` enables verbose output.
@@ -101,42 +101,44 @@ Pass Docker run options directly on the command line:
 
 run-dockerfile extends Dockerfiles with special comment directives.
 
-All run-dockerfile directives must appear in the first 20 lines of the Dockerfile. Both `#directive:` and `# directive:` forms are accepted; examples below use the project's conventional spelling for each directive.
+Directives use a `#run-dockerfile:` prefix followed by the directive keyword and its value, for example `#run-dockerfile: option --network host`. The `#` must start the line, and prefixed directives may appear **anywhere** in the Dockerfile — by convention, keep them grouped at the top (or bottom) so they are easy to find.
+
+The older unprefixed forms (`#option:`, `# platform:`, …) still work but are **deprecated**: they are honored only in the first 20 lines and print a deprecation warning pointing at the prefixed replacement. The examples below use the prefixed form.
 
 ### Docker options in the Dockerfile
 
-For any options you want to always be present on the command line, but don't bother to type them in every time, use the `#option:` pragma in your Dockerfile:
+For any options you want to always be present on the command line, but don't bother to type them in every time, use the `#run-dockerfile: option` pragma in your Dockerfile:
 
 <!-- readme-sample: directive-01-option -->
 ```dockerfile
-#option: --security-opt seccomp=unconfined
-#option: --cap-add SYS_PTRACE
-#option: --network host
+#run-dockerfile: option --security-opt seccomp=unconfined
+#run-dockerfile: option --cap-add SYS_PTRACE
+#run-dockerfile: option --network host
 FROM ubuntu:22.04
 ```
 
-Each `#option:` line represents one Docker run option. If the option has a value,
+Each `#run-dockerfile: option` line represents one Docker run option. If the option has a value,
 write the option name first and the value after the first space; the whole
 remaining value is passed literally, so spaces and glob characters are
 preserved:
 
 <!-- readme-sample: directive-01b-option-spaces -->
 ```dockerfile
-#option: -v /tmp/my cache:/cache
-#option: -e TOOL_FLAGS=--mode fast
-#option: --mount type=bind,source=/tmp/my cache,target=/cache-ro,readonly
+#run-dockerfile: option -v /tmp/my cache:/cache
+#run-dockerfile: option -e TOOL_FLAGS=--mode fast
+#run-dockerfile: option --mount type=bind,source=/tmp/my cache,target=/cache-ro,readonly
 FROM ubuntu:22.04
 ```
 
-Use multiple `#option:` lines for multiple Docker run options.
+Use multiple `#run-dockerfile: option` lines for multiple Docker run options.
 
-To pass an environment variable, `#option: -e NAME=value` sets a literal value and `#option: -e NAME` (no value) forwards `NAME` from your host environment — both are preserved across the container's internal `su` (see [Forwarding environment variables](#docker-options-on-the-command-line) above).
+To pass an environment variable, `#run-dockerfile: option -e NAME=value` sets a literal value and `#run-dockerfile: option -e NAME` (no value) forwards `NAME` from your host environment — both are preserved across the container's internal `su` (see [Forwarding environment variables](#docker-options-on-the-command-line) above).
 
 ### Fine-tune volume mapping
 
-The default behavior of run-dockerfile is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behavior corresponds to `#mount: .git pwd`.
+The default behavior of run-dockerfile is to search for the root of the git repository and volume mount it; failing that, it will volume mount the current directory. The default behavior corresponds to `#run-dockerfile: mount .git pwd`.
 
-The `#mount:` directive accepts whitespace-separated keywords:
+The `#run-dockerfile: mount` directive accepts whitespace-separated keywords:
 - `.git` - Root of the git repository (searches upward from current directory)
 - `pwd` - Current working directory
 - `home` - Home directory — do not use with untrusted containers
@@ -146,22 +148,22 @@ The keywords are tried in order and the first available directory is mounted; if
 **Example**: Restrict container to git repository only, to avoid any security lapses:
 <!-- readme-sample: directive-02-mount -->
 ```dockerfile
-#mount: .git
+#run-dockerfile: mount .git
 FROM ubuntu:22.04
 # Only git repo is mounted, not entire $HOME
 ```
 
-Multiple `#mount:` directives are also supported. They are accumulated in file order.
+Multiple `#run-dockerfile: mount` directives are also supported. They are accumulated in file order.
 
 ### Select the files to be in your home directory
 
-To have files copied over to your home directory in the container, use the `#copy.home:` directive. It takes just a single path to a file relative to your home directory. For multiple files, simply use the directive multiple times.
+To have files copied over to your home directory in the container, use the `#run-dockerfile: copy.home` directive. It takes just a single path to a file relative to your home directory. For multiple files, simply use the directive multiple times.
 
-In this example, there are two license files copied over using `#copy.home:`
+In this example, there are two license files copied over using `#run-dockerfile: copy.home`
 <!-- readme-sample: directive-03-copy-home -->
 ```dockerfile
-#copy.home: .license.dat
-#copy.home: .config/my-tool/license.json
+#run-dockerfile: copy.home .license.dat
+#run-dockerfile: copy.home .config/my-tool/license.json
 FROM ubuntu:22.04
 ```
 
@@ -173,23 +175,23 @@ The files are collected at **run time**, not build time — the image itself nev
 
 ### Mount specific directories
 
-Use the `#usermount:` directive to mount specific directories into the container. Unlike `#mount:`, this directive creates the directory if it doesn't exist (as the current user, not root). Each directory is mounted at the **same path inside the container** as on the host, so `$HOME/.cache/pip` on the host appears at `$HOME/.cache/pip` in the container.
+Use the `#run-dockerfile: usermount` directive to mount specific directories into the container. Unlike `#run-dockerfile: mount`, this directive creates the directory if it doesn't exist (as the current user, not root). Each directory is mounted at the **same path inside the container** as on the host, so `$HOME/.cache/pip` on the host appears at `$HOME/.cache/pip` in the container.
 
 Environment variables are expanded, so you can use $HOME, $PWD, etc.:
 
 <!-- readme-sample: directive-04-usermount-env -->
 ```dockerfile
-#usermount: $HOME/projects/shared-cache
-#usermount: $HOME/.local/share/myapp
+#run-dockerfile: usermount $HOME/projects/shared-cache
+#run-dockerfile: usermount $HOME/.local/share/myapp
 FROM ubuntu:22.04
 ```
 
-Each `#usermount:` line is a single path (which may contain spaces); use multiple lines for multiple paths:
+Each `#run-dockerfile: usermount` line is a single path (which may contain spaces); use multiple lines for multiple paths:
 
 <!-- readme-sample: directive-05-usermount-multiple -->
 ```dockerfile
-#usermount: $HOME/.cache/pip
-#usermount: $HOME/.cache/npm
+#run-dockerfile: usermount $HOME/.cache/pip
+#run-dockerfile: usermount $HOME/.cache/npm
 FROM ubuntu:22.04
 ```
 
@@ -197,11 +199,11 @@ This is useful when you need persistent storage for specific directories without
 
 ### Platform selection
 
-Specify the target platform in the first 20 lines:
+Specify the target platform:
 
 <!-- readme-sample: directive-06-platform -->
 ```dockerfile
-# platform: arm64
+#run-dockerfile: platform arm64
 FROM ubuntu:22.04
 ```
 
@@ -215,29 +217,29 @@ Serve local directories via HTTP during image builds (useful for large installer
 
 <!-- readme-sample: directive-07-http-static -->
 ```dockerfile
-#http.static: INSTALLER=../installers
+#run-dockerfile: http.static INSTALLER=../installers
 FROM buildpack-deps:bookworm
 
 ARG HTTP_INSTALLER
 RUN wget ${HTTP_INSTALLER}/large-sdk-installer.run && sh ./large-sdk-installer.run && rm ./large-sdk-installer.run
 ```
 
-**Note:** Relative paths are resolved from the Dockerfile's directory. The directory must exist before build. Declare `ARG HTTP_<KEY>` after `FROM`, before any `RUN` that uses the generated URL; for `#http.static: INSTALLER=...`, declare `ARG HTTP_INSTALLER`.
+**Note:** Relative paths are resolved from the Dockerfile's directory. The directory must exist before build. Declare `ARG HTTP_<KEY>` after `FROM`, before any `RUN` that uses the generated URL; for `#run-dockerfile: http.static INSTALLER=...`, declare `ARG HTTP_INSTALLER`.
 
 The script automatically:
 - Starts a temporary HTTP server on a random port
 - Passes the URL as `HTTP_<KEY>` build argument
 - Cleans up the server after build completes
 
-**Caveat:** Changes to files in directories served by `#http.static:` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild (the image is tagged with the container directory name — see [Project structure](#project-structure)).
+**Caveat:** Changes to files in directories served by `#run-dockerfile: http.static` do not trigger automatic rebuilds. Use `docker rmi <image-name>` to force a rebuild (the image is tagged with the container directory name — see [Project structure](#project-structure)).
 
 ### BuildKit named contexts
 
-Pass Docker BuildKit named contexts with `#context:`:
+Pass Docker BuildKit named contexts with `#run-dockerfile: context`:
 
 <!-- readme-sample: directive-08-context-local -->
 ```dockerfile
-#context: installer=../installers
+#run-dockerfile: context installer=../installers
 FROM ubuntu:22.04
 
 COPY --from=installer large-sdk-installer.run /tmp/large-sdk-installer.run
@@ -248,24 +250,24 @@ Multiple directives are allowed. The context name must match `[a-z_][a-z0-9_.-]*
 
 <!-- readme-sample: directive-09-context-remote -->
 ```dockerfile
-#context: base=docker-image://alpine:latest
-#context: src=https://github.com/org/repo.git
+#run-dockerfile: context base=docker-image://alpine:latest
+#run-dockerfile: context src=https://github.com/org/repo.git
 ```
 
-**Caveat:** Changes to files inside named contexts do not trigger automatic rebuilds. Changing the `#context:` line itself does trigger a rebuild. Use `docker rmi <image-name>` to force a rebuild after changing only named-context contents.
+**Caveat:** Changes to files inside named contexts do not trigger automatic rebuilds. Changing the `#run-dockerfile: context` line itself does trigger a rebuild. Use `docker rmi <image-name>` to force a rebuild after changing only named-context contents.
 
 ### Sudo configuration
 
-If you need `sudo` access inside the container, use the `#sudo:` directive and make sure sudo has been installed, as in the following example:
+If you need `sudo` access inside the container, use the `#run-dockerfile: sudo` directive and make sure sudo has been installed, as in the following example:
 
 <!-- readme-sample: directive-10-sudo -->
 ```dockerfile
-#sudo: all
+#run-dockerfile: sudo all
 FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y sudo
 ```
 
-With `#sudo: all`, run-dockerfile creates a sudoers entry allowing passwordless sudo for the container user. Without this directive, even if sudo is installed, it won't be configured for the container user.
+With `#run-dockerfile: sudo all`, run-dockerfile creates a sudoers entry allowing passwordless sudo for the container user. Without this directive, even if sudo is installed, it won't be configured for the container user.
 
 ### GUI applications (X11)
 
@@ -273,9 +275,9 @@ run-dockerfile can run X11 applications with minimal configuration:
 
 ```dockerfile
 # X11 Application Container
-#copy.home: .Xauthority
-#option: -e DISPLAY
-#option: -v /tmp/.X11-unix:/tmp/.X11-unix
+#run-dockerfile: copy.home .Xauthority
+#run-dockerfile: option -e DISPLAY
+#run-dockerfile: option -v /tmp/.X11-unix:/tmp/.X11-unix
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y \
@@ -297,7 +299,7 @@ Usage:
 ./containers/x11-apps/run kicad
 ```
 
-**Why `#copy.home: .Xauthority`?** This securely copies only the X11 authentication file instead of mounting your entire home directory, following the principle of least privilege.
+**Why `#run-dockerfile: copy.home .Xauthority`?** This securely copies only the X11 authentication file instead of mounting your entire home directory, following the principle of least privilege.
 
 On Linux, X11 typically also requires forwarding `DISPLAY` and mounting `/tmp/.X11-unix` as shown above. Some setups instead require `--network host`, a remote X server, or Docker Desktop-specific display configuration.
 
@@ -338,12 +340,12 @@ ENV LANG=de_DE.UTF-8
 ENV LC_ALL=de_DE.UTF-8
 ```
 
-If you want a project container to use host-provided values, forward them from the Dockerfile with `#option:`:
+If you want a project container to use host-provided values, forward them from the Dockerfile with `#run-dockerfile: option`:
 
 <!-- readme-sample: timezone-04-host-env-dockerfile -->
 ```dockerfile
-#option: -e TZ
-#option: -e LANG
+#run-dockerfile: option -e TZ
+#run-dockerfile: option -e LANG
 FROM buildpack-deps:bookworm
 ```
 
@@ -387,7 +389,7 @@ inline with a `COPY` heredoc instead of shipping a separate file:
 
 <!-- readme-sample: installer-01-expect -->
 ```dockerfile
-#http.static: INSTALLER=../installers
+#run-dockerfile: http.static INSTALLER=../installers
 FROM buildpack-deps:bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends expect \
     && rm -rf /var/lib/apt/lists/*
@@ -448,22 +450,22 @@ As long as each container directory's `run` symlink points to `run-dockerfile/bu
 **On the host:**
 
 - Linux or macOS with Docker and bash.
-- For foreign-architecture `# platform:` builds/runs, Docker must have binfmt/QEMU support configured for the requested platform.
+- For foreign-architecture `#run-dockerfile: platform` builds/runs, Docker must have binfmt/QEMU support configured for the requested platform.
 - GNU `tar` is optional; when unavailable, run-dockerfile uses a portable metadata-manifest hash for rebuild detection.
-- `python3` — only when using `#http.static:`.
-- Linux `ip` command from iproute2 — only when using `#http.static:` on Linux.
+- `python3` — only when using `#run-dockerfile: http.static`.
+- Linux `ip` command from iproute2 — only when using `#run-dockerfile: http.static` on Linux.
 
 **In the image:**
 
 - `/bin/sh`, `su`, and writable `/etc/passwd` and `/etc/group` — users and groups are created by appending entries directly, so no `useradd` is needed. Standard Debian, Ubuntu, Fedora and Alpine base images all qualify; scratch and distroless images do not.
-- `tar` with gzip support — only when using `#copy.home:` (the files are delivered as a tarball extracted inside the container).
-- `sudo` — only when using `#sudo: all`; run-dockerfile creates `/etc/sudoers.d/` if it is missing.
+- `tar` with gzip support — only when using `#run-dockerfile: copy.home` (the files are delivered as a tarball extracted inside the container).
+- `sudo` — only when using `#run-dockerfile: sudo all`; run-dockerfile creates `/etc/sudoers.d/` if it is missing.
 
 ## Technical details
 
 - Creates a temporary user inside the container matching your host UID/GID; conflicting image user/group names get deterministic fallback names such as `${name}_${id}` and `${name}_${id}_a`
 - Uses `su` for privilege de-escalation (no sudo requirement)
-- Optionally configures sudoers with `#sudo: all` directive
+- Optionally configures sudoers with `#run-dockerfile: sudo all` directive
 - Preserves your working directory inside the container
 - Auto-detects TTY for interactive sessions
 - Always uses Docker BuildKit (the modern build path, the engine default since Docker 23.0); `RUN --mount`, cache mounts, build secrets, and named contexts work out of the box
@@ -480,23 +482,23 @@ run-dockerfile has **secure defaults for trusted Dockerfiles**:
 **When you need $HOME access** (e.g., for shell configurations, SSH keys):
 
 ```dockerfile
-#mount: home
+#run-dockerfile: mount home
 FROM ubuntu:22.04
 ```
 
 **When you need specific files only** (most secure):
 
 ```dockerfile
-#copy.home: .license.dat
-#copy.home: .ssh/config
+#run-dockerfile: copy.home .license.dat
+#run-dockerfile: copy.home .ssh/config
 FROM ubuntu:22.04
 ```
 
 The default behavior helps avoid accidental host exposure in CI/CD pipelines: nothing outside the project directory is exposed to the container unless a trusted Dockerfile or command line explicitly asks for it.
 
-When using `#http.static:`, run-dockerfile briefly starts a temporary HTTP server on a random host port during the image build and serves files only under a high-entropy temporary URL prefix passed through `HTTP_<KEY>`. Treat that URL as visible to other users who can inspect build arguments or process output while the build is running; serve only trusted, non-secret files.
+When using `#run-dockerfile: http.static`, run-dockerfile briefly starts a temporary HTTP server on a random host port during the image build and serves files only under a high-entropy temporary URL prefix passed through `HTTP_<KEY>`. Treat that URL as visible to other users who can inspect build arguments or process output while the build is running; serve only trusted, non-secret files.
 
-**Trust model:** run-dockerfile is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#option:` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#usermount:` creates directories on the host, and `#copy.home:` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
+**Trust model:** run-dockerfile is intended for Dockerfiles you trust — your own projects and submodules you have reviewed. Directive values are never evaluated by a shell on the host, but the directives themselves are powerful: `#run-dockerfile: option` can pass arbitrary `docker run` flags such as `--privileged` or `-v /:/host`, `#run-dockerfile: usermount` creates directories on the host, and `#run-dockerfile: copy.home` copies files out of your host `$HOME`. Review the Dockerfile before running `./run` on a project you did not write.
 
 ## Testing
 

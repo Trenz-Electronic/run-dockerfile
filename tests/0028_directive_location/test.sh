@@ -49,6 +49,23 @@ check_late_directive '#http.static: INSTALLER=../installers' '#http.static:'
 check_late_directive '#option: --read-only' '#option:'
 check_late_directive '#sudo: all' '#sudo:'
 
-rm -f Dockerfile
+# The prefixed form is honored anywhere, including after line 20: it must NOT
+# trip the unprefixed-only 20-line limit.
+write_late_directive_dockerfile '#run-dockerfile: option -e LATE_PREFIX_OK=1'
+if ./run true >/dev/null 2>err; then
+    if printf '%s\n' "$(cat err)" | grep -F "first 20 lines" >/dev/null; then
+        echo "FAIL: prefixed directive after line 20 hit the 20-line limit"
+        cat err
+        fail=1
+    else
+        echo "PASS: prefixed directive after line 20 is honored"
+    fi
+else
+    echo "FAIL: prefixed directive after line 20 caused run to fail"
+    cat err
+    fail=1
+fi
+
+rm -f Dockerfile err
 
 exit $fail

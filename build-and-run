@@ -688,8 +688,78 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
+# Build the normalized directive stream that every directive parser below
+# consumes. Two accepted spellings collapse to one canonical "#<keyword>: <value>"
+# line here, so the individual parsers never need to learn about the prefix:
+#   * New form  - "#run-dockerfile: <keyword> <value>" with '#' at column 1,
+#     allowed ANYWHERE in the file. The keyword carries no colon and >=1 space or
+#     tab must follow the prefix colon. A missing/empty keyword, missing
+#     whitespace, or unknown keyword is a hard error (the prefix signals intent,
+#     so a malformed line is reported rather than silently ignored).
+#   * Old form  - "#<keyword>: <value>" within the first 20 lines (the historical,
+#     now-deprecated spelling). Emitted verbatim and reported as deprecated.
+# Lines are emitted in Dockerfile order, so head -1 (#platform:) and tail -1
+# (#sudo:) keep their meaning. Errors and the one-time deprecation warning go to
+# stderr; only canonical directive lines reach stdout.
+build_directive_stream() {
+  awk '
+    BEGIN {
+      split("platform mount copy.home usermount http.static context option sudo", _k, " ")
+      for (_i in _k) known[_k[_i]] = 1
+      plen = length("#run-dockerfile:")
+      err = 0
+      ndep = 0
+    }
+    /^#run-dockerfile:/ {
+      rest = substr($0, plen + 1)
+      if (rest != "" && rest !~ /^[[:space:]]/) {
+        printf("ERROR: #run-dockerfile: directive on line %d needs whitespace after the colon, e.g. #run-dockerfile: option --network host\n", NR) > "/dev/stderr"
+        err = 1; next
+      }
+      sub(/^[[:space:]]+/, "", rest)
+      if (rest == "") {
+        printf("ERROR: empty #run-dockerfile: directive on line %d; expected a keyword, e.g. #run-dockerfile: option --network host\n", NR) > "/dev/stderr"
+        err = 1; next
+      }
+      kw = rest; sub(/[[:space:]].*/, "", kw)
+      val = rest; sub(/^[^[:space:]]+/, "", val); sub(/^[[:space:]]+/, "", val)
+      if (!(kw in known)) {
+        bare = kw; sub(/:$/, "", bare)
+        if (bare in known)
+          printf("ERROR: #run-dockerfile: directive on line %d: write the keyword without a colon, e.g. #run-dockerfile: %s ...\n", NR, bare) > "/dev/stderr"
+        else
+          printf("ERROR: unknown #run-dockerfile: directive keyword %s on line %d\n", kw, NR) > "/dev/stderr"
+        err = 1; next
+      }
+      print "#" kw ": " val
+      next
+    }
+    NR <= 20 && /^#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):/ {
+      print $0
+      okw = $0; sub(/^#[[:space:]]*/, "", okw); sub(/:.*/, "", okw)
+      oval = $0; sub(/^#[[:space:]]*[^:]+:[[:space:]]*/, "", oval)
+      ndep++
+      dep_line[ndep] = NR
+      dep_kw[ndep] = okw
+      dep_val[ndep] = oval
+      dep_orig[ndep] = $0
+      next
+    }
+    END {
+      if (err) exit 1
+      if (ndep > 0) {
+        print "WARNING: deprecated run-dockerfile directives (the unprefixed form will be removed in a future release; switch to the #run-dockerfile: prefix):" > "/dev/stderr"
+        for (i = 1; i <= ndep; i++)
+          printf("  line %d: %s  ->  #run-dockerfile: %s %s\n", dep_line[i], dep_orig[i], dep_kw[i], dep_val[i]) > "/dev/stderr"
+      }
+    }
+  ' "$1"
+}
+
 # Validate that known run-dockerfile directives are not hidden below the parse
-# window. Silently ignoring a late directive would make the Dockerfile misleading.
+# window. Silently ignoring a late unprefixed directive would make the Dockerfile
+# misleading. (Prefixed "#run-dockerfile:" directives are allowed anywhere and are
+# not matched here; malformed ones are caught by build_directive_stream below.)
 if [ -f "$dir/Dockerfile" ]; then
   MISPLACED_DIRECTIVE=$(awk '
     NR > 20 && /^[[:space:]]*#[[:space:]]*(platform|mount|copy\.home|usermount|context|http\.static|option|sudo):[[:space:]]*/ {
@@ -703,9 +773,19 @@ if [ -f "$dir/Dockerfile" ]; then
   if [ -n "$MISPLACED_DIRECTIVE" ]; then
     directive_line=${MISPLACED_DIRECTIVE%%:*}
     directive_name=${MISPLACED_DIRECTIVE#*:}
-    >&2 echo "ERROR: run-dockerfile directive '${directive_name}' found on line ${directive_line}; directives must appear in the first 20 lines of Dockerfile"
+    >&2 echo "ERROR: run-dockerfile directive '${directive_name}' found on line ${directive_line}; the unprefixed form must appear in the first 20 lines of Dockerfile - move it up, or use the '#run-dockerfile: <directive>' prefix to place it anywhere"
     exit 1
   fi
+fi
+
+# Normalize directive spellings (prefixed-anywhere + deprecated unprefixed) into a
+# single canonical stream that every parser below consumes instead of re-reading
+# the Dockerfile. A malformed prefixed directive exits non-zero here (message
+# already on stderr, tripping `set -e`); the deprecation warning, if any, prints
+# here too.
+DIRECTIVE_STREAM=""
+if [ -f "$dir/Dockerfile" ]; then
+  DIRECTIVE_STREAM=$(build_directive_stream "$dir/Dockerfile")
 fi
 
 # Parse #mount:, #copy.home:, and #usermount: directives from Dockerfile
@@ -714,7 +794,7 @@ COPY_HOME_FILES=()
 USERMOUNT_PATHS=()
 if [ -f "$dir/Dockerfile" ]; then
   # Parse #mount: directives (first 20 lines, multiple directives allowed)
-  MOUNT_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*mount:[[:space:]]*' || true)
+  MOUNT_LINES=$(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*mount:[[:space:]]*' || true)
   if [ -n "$MOUNT_LINES" ]; then
     MOUNT_KEYWORDS=$(echo "$MOUNT_LINES" | sed -E 's/^#[[:space:]]*mount:[[:space:]]*//' | tr '\n' ' ')
   fi
@@ -725,7 +805,7 @@ if [ -f "$dir/Dockerfile" ]; then
   while IFS= read -r _ch_line; do
     _ch_file=$(printf '%s' "$_ch_line" | sed -E 's/^#[[:space:]]*copy\.home:[[:space:]]*//; s/[[:space:]]+$//')
     [ -n "$_ch_file" ] && COPY_HOME_FILES+=("$_ch_file")
-  done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*copy\.home:[[:space:]]*' || true)
+  done < <(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*copy\.home:[[:space:]]*' || true)
 
   # Parse #usermount: directives (first 20 lines, multiple directives allowed).
   # Each line specifies exactly ONE path (the whole value after the colon,
@@ -734,7 +814,7 @@ if [ -f "$dir/Dockerfile" ]; then
   while IFS= read -r _um_line; do
     _um_path=$(printf '%s' "$_um_line" | sed -E 's/^#[[:space:]]*usermount:[[:space:]]*//; s/[[:space:]]+$//')
     [ -n "$_um_path" ] && USERMOUNT_PATHS+=("$_um_path")
-  done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*usermount:[[:space:]]*' || true)
+  done < <(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*usermount:[[:space:]]*' || true)
 fi
 
 # Function to find the git repository root by traversing up from a directory.
@@ -924,7 +1004,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
   BUILD_CONTEXT_ARGS=()
 
   if [ -f "$dir/Dockerfile" ]; then
-    PLATFORM_LINE=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
+    PLATFORM_LINE=$(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*platform:[[:space:]]*' | head -n 1)
     if [ -n "$PLATFORM_LINE" ]; then
       BUILD_PLATFORM=$(echo "$PLATFORM_LINE" | sed -E 's/^#[[:space:]]*platform:[[:space:]]*([^[:space:]]+).*/\1/')
       >&2 echo "Found platform tag in Dockerfile: ${BUILD_PLATFORM}"
@@ -960,7 +1040,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
       fi
 
       BUILD_CONTEXT_ARGS+=(--build-context "${CONTEXT_NAME}=${RESOLVED_CONTEXT_VALUE}")
-    done < <(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*context:[[:space:]]*' || true)
+    done < <(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*context:[[:space:]]*' || true)
 
     # Cleanup for HTTP servers, their per-server port files, and the shared
     # server script. Defined (and the trap armed) before any server starts so
@@ -985,7 +1065,7 @@ if [ "$NEED_REBUILD" -eq 1 ]; then
     trap cleanup_http_servers EXIT INT TERM
 
     # Parse http.static directives and start one HTTP server per directive.
-    HTTP_STATIC_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*http\.static:[[:space:]]*' || true)
+    HTTP_STATIC_LINES=$(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*http\.static:[[:space:]]*' || true)
     if [ -n "$HTTP_STATIC_LINES" ]; then
       # The server script is identical for every directive, so create it once
       # and reuse it; cleanup removes it. (A previous per-iteration mktemp
@@ -1230,7 +1310,7 @@ fi
 DOCKER_OPTIONS=()
 OPTION_ENV_VARS=""
 if [ -f "$dir/Dockerfile" ]; then
-  OPTION_LINES=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*option:[[:space:]]*' || true)
+  OPTION_LINES=$(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*option:[[:space:]]*' || true)
   if [ -n "$OPTION_LINES" ]; then
     # Each #option: directive is one docker-run option. Split only once: the
     # option token itself, then the entire remaining text as that option's value.
@@ -1286,7 +1366,7 @@ fi
 SUDO_MODE=""
 SUDO_MODE_ARG=()
 if [ -f "$dir/Dockerfile" ]; then
-  SUDO_LINE=$(head -n 20 "$dir/Dockerfile" | grep -E '^#[[:space:]]*sudo:[[:space:]]*' | tail -1 || true)
+  SUDO_LINE=$(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*sudo:[[:space:]]*' | tail -1 || true)
   if [ -n "$SUDO_LINE" ]; then
     SUDO_MODE=$(echo "$SUDO_LINE" | sed -E 's/^#[[:space:]]*sudo:[[:space:]]*//' | tr -d ' ')
   fi
