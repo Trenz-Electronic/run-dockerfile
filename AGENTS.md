@@ -26,8 +26,9 @@ depend on Docker/QEMU platform support.
 ## Coding Style & Naming Conventions
 
 Keep host-side code in `build-and-run` compatible with Bash and pass command
-arguments through arrays rather than shell evaluation. The `user-command` branch
-is executed by container `/bin/sh`; keep that branch POSIX-sh compatible. Use
+arguments through arrays rather than shell evaluation. The in-container entry point
+is the separate `run-dockerfile-user-command` script, executed by container
+`/bin/sh`; keep it POSIX-sh compatible. Use
 clear lowercase function names with underscores, quote variable expansions, and
 prefer explicit error messages. Tests are POSIX `sh` scripts with `set -e`.
 Name new tests as `tests/NNNN_short_description/` and include `test.sh`; add a

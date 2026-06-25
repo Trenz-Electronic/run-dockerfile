@@ -11,8 +11,13 @@ run-dockerfile is a single-script Docker workflow tool that automates image buil
 
 ## Key Files
 
-- `build-and-run` - The main script. This is the entire tool. The host side requires
-  **bash** (`#!/usr/bin/env bash`); see the "Two shells" note under Architecture.
+- `build-and-run` - The host driver (host **bash**, `#!/usr/bin/env bash`): parses the
+  Dockerfile, builds the image, bakes in the entry script, and runs the container. This
+  is the file symlinked as `run` beside a project Dockerfile.
+- `run-dockerfile-user-command` - The in-container entry point (**POSIX sh**), baked by
+  `build-and-run` into the image at `/bin/run-dockerfile-user-command`. Creates the
+  host-matching user, drops privileges with `su`, and execs the command. Never runs on
+  the host. See the two-file note under Architecture.
 - `tests/lib/portable.sh` - POSIX `/bin/sh` helpers for test-only host portability
   checks. Product portability helpers belong in `build-and-run`.
 - `README.md` - User documentation. In the README.md, the focus is on what it does for users, including technical details only when necessary for using the run-dockerfile. The implementation details should go into CLAUDE.md.
@@ -43,7 +48,7 @@ lines and reported with a one-time deprecation warning on stderr.
 - FIRST-found semantics: checks keywords in order, uses first match
 - Multiple `#mount:` directives accumulate keywords
 - The **deprecated unprefixed** form is honored only in the first 20 lines; a known unprefixed directive after line 20 is an error rather than silently ignored (the error message points at the `#run-dockerfile:` prefix as the way to place it anywhere). Prefixed directives are honored at any line.
-- `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data. Like `#usermount:`, it takes **exactly one path per directive line** (trimmed, parsed into a bash array), so filenames may contain spaces; use multiple `#copy.home:` lines for multiple files. After extraction, ownership is fixed **only** on the copied entries and the parent directories leading to them (driven by `tar tzf`, walking each member's ancestors) — never a recursive `chown -R` over `$HOME`, which could re-own a bind-mounted host home (`#mount: home`, or simply the project dir that usually lives under `$HOME`).
+- `#copy.home:` is purely run-time: on each `./run` invocation, build-and-run tars the listed files from host `$HOME`, bind-mounts the tarball at `/tmp/home-files.tar.gz`, and the in-container `run-dockerfile-user-command` extracts it into the new user's `$HOME` after user creation. If any file is missing on the host, the script exits 1 with an explicit error *before* `docker run` starts. The image itself never contains the host data. Like `#usermount:`, it takes **exactly one path per directive line** (trimmed, parsed into a bash array), so filenames may contain spaces; use multiple `#copy.home:` lines for multiple files. After extraction, ownership is fixed **only** on the copied entries and the parent directories leading to them (driven by `tar tzf`, walking each member's ancestors) — never a recursive `chown -R` over `$HOME`, which could re-own a bind-mounted host home (`#mount: home`, or simply the project dir that usually lives under `$HOME`).
 - `#usermount:` takes **exactly one path per directive line** (the whole value after the colon, trimmed), so paths may contain spaces. Use multiple `#usermount:` lines for multiple paths — they accumulate. (Unlike `#mount:`, which whitespace-splits its keywords, the value is *not* split into several entries.)
 - `#context:` is build-time only and maps directly to Docker BuildKit named contexts: `#context: name=value` becomes `docker build --build-context name=value`. Multiple directives accumulate. The parser splits only on the first `=`, trims outer whitespace around the name and value, validates only the name (`[a-z_][a-z0-9_.-]*`), and passes the value through a bash array without shell evaluation. Local values resolve from the Dockerfile directory: absolute paths stay absolute; `./`, `../`, and bare relative paths are resolved against that directory and must exist before build. Values that look like URI/special forms (`scheme://...`, `target:...`, Git-style `user@host:path`) pass through unchanged. Named contexts require BuildKit, which run-dockerfile always enables (see below).
 - `#option:` takes one Docker option per directive line. The parser strips the directive prefix, trims trailing whitespace, splits once at the first whitespace, and passes the first token plus the entire remaining text as two bash-array arguments. This keeps common forms like `#option: --cpus 1` backward compatible while allowing option values with spaces, e.g. `#option: -v /tmp/my cache:/cache` and `#option: -e FLAGS=--mode fast`. Boolean flags such as `#option: --read-only` are single-token directives; adding a value to a known boolean flag is rejected.
@@ -57,29 +62,31 @@ lines and reported with a one-time deprecation warning on stderr.
 
 ## Architecture
 
-The script operates in two modes based on `$0`:
-1. **Normal mode** - Parses Dockerfile, builds image if needed, runs container
-2. **user-command mode** - Runs inside container, creates user matching host UID/GID/group, executes command
+run-dockerfile is split into two files, each running under its own shell:
 
-**Two shells (important constraint).** The same file runs under two different shells:
-- **Normal mode runs on the host under bash** (via the `./run` symlink → the script's
-  shebang). Only this part may use bash features. It builds the `docker build` / `docker
-  run` invocations as **bash arrays** expanded with `"${arr[@]}"` (e.g.
-  `CMDLINE_DOCKER_ARGS`, `USERMOUNT_VARGS`, `DOCKER_OPTIONS`, `BUILD_CMD`), so paths and
-  values containing spaces or glob characters are passed verbatim and **no `eval`** is
-  used for the run/build commands.
-- **user-command mode runs inside the container under the container's `/bin/sh`** (the
-  container is started with `--entrypoint /bin/sh ... /bin/user-command`, which ignores
-  the script's shebang). This branch (everything before the early-return `fi`) **must stay
-  POSIX sh** — busybox ash / dash. It is safe to mix the two because the user-command
-  branch always `exec`s/`exit`s before any bash-only code, so the container shell never
-  parses the array syntax below it. **When editing: keep all bashisms after that branch.**
-  Preserved env vars are carried across the `su` privilege drop as positional parameters
-  (`set -- "$var=$val" "$@"`), so values containing spaces survive intact.
+1. **Host driver — `build-and-run`, host `bash`.** Parses the Dockerfile and its
+   directives, builds the base image if needed, bakes the in-container entry script into
+   a thin derived image, and runs the container. It builds the `docker build` / `docker
+   run` invocations as **bash arrays** expanded with `"${arr[@]}"` (e.g.
+   `CMDLINE_DOCKER_ARGS`, `USERMOUNT_VARGS`, `DOCKER_OPTIONS`, `BUILD_CMD`, `DERIVE_CMD`),
+   so paths and values containing spaces or glob characters are passed verbatim and **no
+   `eval`** is used for the run/build commands. To locate the entry script for baking it
+   follows `$0`'s symlinks to the real `build-and-run` and reads the sibling
+   `run-dockerfile-user-command` (whereas `real_self`, used for the container dir/tag,
+   deliberately leaves the `run` symlink **unresolved**).
+2. **In-container entry point — `run-dockerfile-user-command`, container `/bin/sh`.**
+   Baked into the image at `/bin/run-dockerfile-user-command` (the container is started
+   with `--entrypoint /bin/sh ... /bin/run-dockerfile-user-command USER UID GID GROUP HOME
+   CMD...`). It creates a user/group matching the host UID/GID, optionally writes a
+   `#sudo: all` sudoers entry, extracts `#copy.home:` files, then drops privileges with
+   `su` and execs the user's command. This file **must stay POSIX sh** (busybox ash /
+   dash) — it never runs under bash. Preserved env vars are carried across the `su`
+   privilege drop as positional parameters (`set -- "$var=$val" "$@"`), so values
+   containing spaces survive intact.
 
 User/group mapping preserves host username, UID, and GID. Group-name preservation is best-effort: if the host group name already exists in the container with a different GID, run-dockerfile creates `${groupname}_${gid}`; if that fallback name also exists with a different GID, it tries `${groupname}_${gid}_a` through `${groupname}_${gid}_z` before failing clearly. If another image group already has the host GID, both group names may share that numeric GID, and reverse lookups such as `id -gn` may report the image's first matching group name. The host user is mapped by **identity, not just name**: the image's existing user is reused only when it matches the host on name, UID *and* primary GID; if the image ships a user with the same name but a different UID/GID, the container instead runs as a distinct user `${username}_${uid}` carrying the host UID/GID (so bind-mounted files stay accessible). If that fallback username also exists with a different UID/GID, run-dockerfile tries `${username}_${uid}_a` through `${username}_${uid}_z` before failing. The `su` target and any `#sudo:` sudoers entry use this resolved user.
 
-The script **bakes itself** into the image at `/bin/user-command` rather than bind-mounting the host script there at run time. After the base image is built (or found unchanged), a thin derived image `${tag}.user-command` is built `FROM` it with a single `COPY --chmod=0755 user-command /bin/user-command`; the container then runs from that derived image. The container starts as root before dropping to the mapped user, and the baked copy is a root-owned `0755` file, so a (compromised) container cannot overwrite it — and the host script is never exposed to the container at all (regression-tested by `tests/0032`). An earlier revision instead bind-mounted the script read-only (`-v "${real_self}:/bin/user-command:ro"`); that added a read-only real-filesystem entry to `/proc/mounts`, which made tools that enumerate mounts for a writability/disk-space check — notably RPM5 (PetaLinux's `smart`/`do_gen_sysroot`) — abort with `installing package … on /bin/user-command rdonly filesystem` whenever the read-only mount shared the workspace's device. Baking avoids the mount entirely. The derived image carries a `run-dockerfile.user-command-hash` label binding the base image id and the script content, so it is rebuilt only when either changes; the unchanged path costs one extra `docker inspect` and no build. The image tag is the container **directory name**, so it is validated up front against `^[a-z0-9][a-z0-9._-]*$`; an invalid name (e.g. containing uppercase) fails with an actionable message instead of a cryptic `docker build` "repository name must be lowercase" error (regression-tested by `tests/0033`).
+The host driver **bakes the in-container entry script** (`run-dockerfile-user-command`) into the image at `/bin/run-dockerfile-user-command` rather than bind-mounting it there at run time. After the base image is built (or found unchanged), a thin derived image `${tag}.user-command` is built `FROM` it with a single `COPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command`; the container then runs from that derived image. The container starts as root before dropping to the mapped user, and the baked copy is a root-owned `0755` file, so a (compromised) container cannot overwrite it — and the host scripts are never exposed to the container at all (regression-tested by `tests/0032`). Baking adds no entry to the container's `/proc/mounts`, unlike a bind mount: a read-only real-filesystem mount is rejected by tools that enumerate mounts for a writability/disk-space check (e.g. RPM-based rootfs builds). The derived image carries a `run-dockerfile.user-command-hash` label binding the base image id and the entry-script content, so it is rebuilt only when either changes; the unchanged path costs one extra `docker inspect` and no build. The image tag is the container **directory name**, so it is validated up front against `^[a-z0-9][a-z0-9._-]*$`; an invalid name (e.g. containing uppercase) fails with an actionable message instead of a cryptic `docker build` "repository name must be lowercase" error (regression-tested by `tests/0033`).
 
 `#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/run-dockerfile-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the host side waits up to 30 seconds for each port file before failing. The shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
 
@@ -173,7 +180,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0029_readme_examples` - Tests indexed README Quick Start, command-line option, and Dockerfile directive samples by extracting them into a temporary project (including the "Non-interactive installers" `expect` sample, which is driven against a stand-in interactive `hello-installer.run` fixture so the heredoc `expect` script stays verified)
 - `0030_http_static_multiple` - Tests two `#http.static:` directives each serve their own directory (per-server port files, no stale-port mismap) and leave no port files behind
 - `0031_env_multi_var` - Tests every variable on a multi-variable `ENV` line is carried into `DOCKER_PRESERVE_ENV`, not just the first
-- `0032_user_command_readonly` - Tests `/bin/user-command` is baked into the image (root-owned, executable) and is NOT a bind mount (checked via `/proc/self/mountinfo` and `stat`), so the host script is never mounted in read-only
+- `0032_user_command_readonly` - Tests `/bin/run-dockerfile-user-command` is baked into the image (root-owned, executable) and is NOT a bind mount (checked via `/proc/self/mountinfo` and `stat`), so the host script is never mounted in read-only
 - `0033_invalid_image_name` - Tests a container directory name that is not a valid Docker image name fails early with a clear message
 - `0034_verbose_nonnumeric` - Tests a non-numeric `RUN_DOCKERFILE_VERBOSE` value does not make `info()` emit a shell "integer expression expected" error
 - `0035_env_name_injection` - Tests a command-line `-e` whose variable name embeds shell metacharacters is rejected at the container-side `eval` sink, not executed
