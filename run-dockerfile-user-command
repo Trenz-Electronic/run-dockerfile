@@ -1,0 +1,242 @@
+#!/bin/sh
+#
+# run-dockerfile - in-container entry point
+# https://github.com/Trenz-Electronic/run-dockerfile
+#
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Trenz Electronic GmbH
+#
+# build-and-run bakes this script into the image at /bin/run-dockerfile-user-command
+# (COPY --chmod=0755) and starts the container with
+#   --entrypoint /bin/sh ... /bin/run-dockerfile-user-command USER UID GID GROUP HOME CMD...
+# It creates a user/group matching the host UID/GID, optionally configures
+# passwordless sudo (#sudo: all), extracts #copy.home: files, then drops privileges
+# with su and execs the user's command.
+#
+# This is the in-container half of run-dockerfile and runs under the container's
+# /bin/sh (busybox ash / dash). Keep it POSIX sh - the bash host driver lives in
+# build-and-run, which is NOT baked into the image.
+
+set -e
+
+# Run the given command in the container.
+
+# Argument checks.
+if [ $# -lt 6 ]; then
+  >&2 echo "Missing command-line parameters."
+  >&2 echo "Usage:  container USER USERID GROUPID GROUPNAME HOME COMMAND [PARAMETERS]"
+  exit 2
+fi
+USER=$1
+shift || exit $?
+USERID=$1
+shift || exit $?
+GROUPID=$1
+shift || exit $?
+GROUPNAME=$1
+shift || exit $?
+HOME=$1
+shift || exit $?
+
+# Exact-match lookup of an /etc/passwd or /etc/group entry by its first field.
+# Unlike `grep "^name:"`, the name is matched literally (the case pattern is
+# quoted), so a name containing regex/glob metacharacters - e.g. "john.doe" -
+# cannot match the wrong entry. Prints the first matching line; returns 1 if
+# none. The `|| [ -n "$_lce_line" ]` also handles a final line that lacks a
+# trailing newline.
+lookup_colon_entry() {
+  _lce_file=$1
+  _lce_name=$2
+  while IFS= read -r _lce_line || [ -n "$_lce_line" ]; do
+    case $_lce_line in
+      "$_lce_name":*) printf '%s\n' "$_lce_line"; return 0 ;;
+    esac
+  done < "$_lce_file"
+  return 1
+}
+
+choose_passwd_identity_name() {
+  _cpin_base=$1
+  _cpin_uid=$2
+  _cpin_gid=$3
+  _cpin_letters="abcdefghijklmnopqrstuvwxyz"
+  _cpin_i=0
+
+  while [ "$_cpin_i" -le 26 ]; do
+    if [ "$_cpin_i" -eq 0 ]; then
+      _cpin_name=$_cpin_base
+    else
+      _cpin_letter=$(printf '%s' "$_cpin_letters" | cut -c "$_cpin_i")
+      _cpin_name="${_cpin_base}_${_cpin_letter}"
+    fi
+
+    _cpin_entry=$(lookup_colon_entry /etc/passwd "$_cpin_name" || true)
+    if [ -z "$_cpin_entry" ]; then
+      printf '%s\n' "$_cpin_name"
+      return 0
+    fi
+
+    _cpin_existing_uid=$(echo "$_cpin_entry" | cut -d: -f3)
+    _cpin_existing_gid=$(echo "$_cpin_entry" | cut -d: -f4)
+    if [ "$_cpin_existing_uid" = "$_cpin_uid" ] && [ "$_cpin_existing_gid" = "$_cpin_gid" ]; then
+      printf '%s\n' "$_cpin_name"
+      return 0
+    fi
+
+    _cpin_i=$((_cpin_i + 1))
+  done
+
+  >&2 echo "ERROR: could not find a free container username for host uid/gid ${_cpin_uid}:${_cpin_gid} using base '${_cpin_base}'"
+  return 1
+}
+
+choose_group_identity_name() {
+  _cgin_base=$1
+  _cgin_gid=$2
+  _cgin_letters="abcdefghijklmnopqrstuvwxyz"
+  _cgin_i=0
+
+  while [ "$_cgin_i" -le 26 ]; do
+    if [ "$_cgin_i" -eq 0 ]; then
+      _cgin_name=$_cgin_base
+    else
+      _cgin_letter=$(printf '%s' "$_cgin_letters" | cut -c "$_cgin_i")
+      _cgin_name="${_cgin_base}_${_cgin_letter}"
+    fi
+
+    _cgin_entry=$(lookup_colon_entry /etc/group "$_cgin_name" || true)
+    if [ -z "$_cgin_entry" ]; then
+      printf '%s\n' "$_cgin_name"
+      return 0
+    fi
+
+    _cgin_existing_gid=$(echo "$_cgin_entry" | cut -d: -f3)
+    if [ "$_cgin_existing_gid" = "$_cgin_gid" ]; then
+      printf '%s\n' "$_cgin_name"
+      return 0
+    fi
+
+    _cgin_i=$((_cgin_i + 1))
+  done
+
+  >&2 echo "ERROR: could not find a free container group name for host gid ${_cgin_gid} using base '${_cgin_base}'"
+  return 1
+}
+
+# Add ourselves to the system. The user we will actually su to is RUN_USER.
+#
+# Reuse the image's existing user ONLY if it already matches the host identity
+# exactly - same name, uid AND primary gid. If the image happens to ship a user
+# with the same name but a different uid/gid, that name is a different identity,
+# so we must NOT reuse it (su'ing to it would run under the image's uid and break
+# access to bind-mounted host files). In that case run as a distinct, deterministic
+# user based on "${USER}_${USERID}" (retrying with _a.._z on collisions) that
+# carries the host uid/gid - mirroring how a group name clash is handled below.
+RUN_USER=$USER
+EXISTING_PASSWD=$(lookup_colon_entry /etc/passwd "$USER" || true)
+if [ -n "$EXISTING_PASSWD" ]; then
+  EXISTING_UID=$(echo "$EXISTING_PASSWD" | cut -d: -f3)
+  EXISTING_GID=$(echo "$EXISTING_PASSWD" | cut -d: -f4)
+  if [ "$EXISTING_UID" != "$USERID" ] || [ "$EXISTING_GID" != "$GROUPID" ]; then
+    RUN_USER=$(choose_passwd_identity_name "${USER}_${USERID}" "$USERID" "$GROUPID") || exit 1
+    if ! lookup_colon_entry /etc/passwd "$RUN_USER" >/dev/null; then
+      echo "$RUN_USER:*:$USERID:$GROUPID:Docker runner:$HOME:/bin/bash" >> /etc/passwd
+    fi
+  fi
+  # else: existing user already matches host uid+gid, reuse it as-is
+else
+  echo "$USER:*:$USERID:$GROUPID:Docker runner:$HOME:/bin/bash" >> /etc/passwd
+fi
+
+# Create sudoers entry only if #sudo: all directive was specified
+if [ "$DOCKER_SUDO_MODE" = "all" ]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    >&2 echo "ERROR: #sudo: all requires sudo to be installed in the image"
+    exit 1
+  fi
+  mkdir -p /etc/sudoers.d
+  echo "$RUN_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/10-docker-users
+  chmod 0440 /etc/sudoers.d/10-docker-users
+fi
+
+# Create group with host group name, handling conflicts
+if lookup_colon_entry /etc/group "$GROUPNAME" >/dev/null; then
+  # Group name exists, check if GID matches
+  EXISTING_GID=$(lookup_colon_entry /etc/group "$GROUPNAME" | cut -d: -f3)
+  if [ "$EXISTING_GID" != "$GROUPID" ]; then
+    # GID conflict, use alternate name
+    GROUPNAME=$(choose_group_identity_name "${GROUPNAME}_$GROUPID" "$GROUPID") || exit 1
+    if ! lookup_colon_entry /etc/group "$GROUPNAME" >/dev/null; then
+      echo "$GROUPNAME::$GROUPID::" >> /etc/group
+    fi
+  fi
+  # Else: group exists with same GID, use it as-is
+else
+  # Group doesn't exist, create it
+  echo "$GROUPNAME::$GROUPID::" >> /etc/group
+fi
+
+# Ensure home directory is owned by the user (Docker may have created it as root
+# when setting up mount points for subdirectories)
+mkdir -p "$HOME"
+chown "$USERID:$GROUPID" "$HOME"
+
+# Extract #copy.home: files if provided
+if [ -f /tmp/home-files.tar.gz ]; then
+  cd "$HOME"
+  tar xzf /tmp/home-files.tar.gz 2>/dev/null || true
+  # Fix ownership of ONLY the copied entries and the parent directories leading
+  # to them - never a recursive `chown -R .`. $HOME may be a bind mount of the
+  # host home (#mount: home) or merely contain one (the project dir usually lives
+  # under $HOME), so recursing would re-own unrelated host files. tar lists each
+  # copied file but NOT the intermediate dirs it creates, so for every member we
+  # also walk its ancestors up to (not including) $HOME, chowning each dir node
+  # itself - without descending into any sibling content.
+  tar tzf /tmp/home-files.tar.gz 2>/dev/null | while IFS= read -r _entry; do
+    [ -n "$_entry" ] || continue
+    _p=$_entry
+    while [ -n "$_p" ] && [ "$_p" != "." ] && [ "$_p" != "/" ]; do
+      chown -h "$USERID:$GROUPID" "$_p" 2>/dev/null || true
+      _parent=$(dirname "$_p")
+      [ "$_parent" = "$_p" ] && break
+      _p=$_parent
+    done
+  done
+  cd - >/dev/null
+fi
+
+# Execute the command as the requested user.
+#
+# NOTE: this branch runs under the *container's* /bin/sh (the image is started
+# with `--entrypoint /bin/sh ... /bin/run-dockerfile-user-command`), so it must stay POSIX and
+# must not use any bash-only syntax. "$@" currently holds the user's command and
+# its arguments. Prepend the preserved environment as VAR=value positional
+# parameters so that values containing spaces survive the su boundary intact
+# (they ride the real argument vector instead of being re-split out of a string).
+if [ -n "$DOCKER_PRESERVE_ENV" ]; then
+  OLD_IFS="$IFS"
+  IFS=','
+  for var in $DOCKER_PRESERVE_ENV; do
+    # Only dereference well-formed variable names. The list is normally built
+    # from validated names, but a command-line `-e 'name;cmd=val'` could carry
+    # shell metacharacters this far, so reject anything that is not a plain
+    # NAME here at the eval sink rather than executing it.
+    case $var in
+      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]* ) continue ;;
+    esac
+    eval "val=\$$var"          # name validated above; RHS is not word-split, so IFS=',' is safe here
+    set -- "$var=$val" "$@"    # order among independent env assignments does not matter
+  done
+  IFS="$OLD_IFS"
+fi
+
+# Use su to drop privileges (no sudo required in container)
+if ! command -v su >/dev/null 2>&1; then
+  >&2 echo "ERROR: 'su' command not found in container"
+  exit 1
+fi
+# Single-quote the -c body so the *inner* shell expands "$@" (= the VAR=value
+# pairs followed by the user command). env reads leading name=value as assignments.
+exec su -s /bin/sh "$RUN_USER" -c 'exec env "$@"' -- sh "$@"
+>&2 echo "Exec failed somehow. Error code: $?"
+exit 3
