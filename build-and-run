@@ -1233,6 +1233,60 @@ EOF
   fi
 fi
 
+# Bake build-and-run into the image at /bin/user-command instead of bind-mounting
+# the host script there at run time. A read-only bind mount adds a real-filesystem,
+# read-only entry to the container's /proc/mounts; a tool that enumerates mounts for
+# a writability/disk-space check - notably RPM5 (PetaLinux's `smart`, used by
+# `do_gen_sysroot`) - then sees a read-only filesystem sharing the workspace's device
+# and aborts every package ("installing package ... on /bin/user-command rdonly
+# filesystem"). Baking the script into an image layer keeps the same hardening - the
+# host script is never exposed to the container, and the baked copy is a root-owned
+# 0755 file the unprivileged user cannot overwrite - without introducing any mount.
+#
+# The bake is a thin image "${tag}.user-command" built FROM the base image. It is
+# rebuilt only when the base image identity or the script content changes (tracked
+# by the run-dockerfile.user-command-hash label), so the common unchanged path costs
+# one extra `docker inspect` and no build.
+run_tag="${tag}.user-command"
+SCRIPT_HASH=$(host_sha256 < "$real_self")
+BASE_ID=$(docker inspect --format='{{.Id}}' "$tag" 2>/dev/null) || true
+if [ -z "$BASE_ID" ]; then
+  >&2 echo "ERROR: base image ${tag} not found; cannot bake /bin/user-command into it."
+  exit 1
+fi
+USER_COMMAND_HASH=$(printf '%s|%s' "$BASE_ID" "$SCRIPT_HASH" | host_sha256)
+
+RUN_INSPECT=$(docker inspect --format='{{index .Config.Labels "run-dockerfile.user-command-hash"}}' "$run_tag" 2>/dev/null) || true
+if [ "$RUN_INSPECT" != "$USER_COMMAND_HASH" ]; then
+  >&2 echo "Baking /bin/user-command into ${run_tag}..."
+  # COPY --chmod and the deterministic layer both rely on BuildKit, which this tool
+  # always enables. Force it on for the case where the base image already existed and
+  # the main build above (which exports it) was skipped.
+  export DOCKER_BUILDKIT=1
+  RUN_BUILD_CTX=$(mktemp -d)
+  # cp dereferences the `run` symlink, so the script CONTENT is staged (not the link).
+  cp "$real_self" "$RUN_BUILD_CTX/user-command"
+  {
+    printf 'FROM %s\n' "$tag"
+    printf 'COPY --chmod=0755 user-command /bin/user-command\n'
+  } > "$RUN_BUILD_CTX/Dockerfile"
+  DERIVE_CMD=(docker build -t "$run_tag" --progress=plain)
+  # Match the base image architecture so cross-platform images bake correctly.
+  if [ -n "$IMGARCH" ]; then
+    case "$IMGARCH" in
+      */*) DERIVE_CMD+=(--platform="${IMGARCH}") ;;
+      *)   DERIVE_CMD+=(--platform="linux/${IMGARCH}") ;;
+    esac
+  fi
+  DERIVE_CMD+=(--label "run-dockerfile.user-command-hash=${USER_COMMAND_HASH}" "$RUN_BUILD_CTX")
+  if ! "${DERIVE_CMD[@]}"; then
+    rm -rf "$RUN_BUILD_CTX"
+    >&2 echo "ERROR: failed to bake /bin/user-command into ${run_tag}."
+    exit 1
+  fi
+  rm -rf "$RUN_BUILD_CTX"
+fi
+
 # Check if stdin is a TTY using POSIX test
 TFLAG=()
 if [ -t 0 ]; then
@@ -1426,7 +1480,6 @@ fi
 # (e.g. after `su -m`), which would create a mismatched or malformed container
 # user. The UID, GID and group name already come from `id` for the same reason.
 DOCKER_RUN_CMD=(docker run --rm -i "${TFLAG[@]}" \
-  -v "${real_self}:/bin/user-command:ro" \
   -v "$MDIR:$MDIR" \
   "${COPY_HOME_VARG[@]}" \
   "${USERMOUNT_VARGS[@]}" \
@@ -1438,7 +1491,7 @@ DOCKER_RUN_CMD=(docker run --rm -i "${TFLAG[@]}" \
   "${CMDLINE_ENV_ARGS[@]}" \
   "${CMDLINE_DOCKER_ARGS[@]}" \
   "${DOCKER_OPTIONS[@]}" \
-  "$tag" \
+  "$run_tag" \
   /bin/user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@")
 
 # All accumulated docker arguments are bash arrays expanded as "${arr[@]}", and
