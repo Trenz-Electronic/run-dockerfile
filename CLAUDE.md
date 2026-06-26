@@ -8,6 +8,7 @@ run-dockerfile is a single-script Docker workflow tool that automates image buil
 ## Design Principles
 
 - **Follow user expectations**: Behavior should match what users intuitively expect. For example, relative paths in Dockerfile directives resolve from the Dockerfile's directory (not from `$PWD`), matching standard Dockerfile conventions like `COPY` and `ADD`.
+- **Host portability**: `build-and-run` must run on the host's stock toolchain, not just GNU/Linux. It targets Linux **and** stock macOS (BSD userland, no GNU coreutils), so prefer POSIX-compatible invocations and provide portable fallbacks where GNU-only behavior is needed — e.g. `compute_context_hash()` uses a deterministic GNU `tar` stream when available and falls back to a portable metadata manifest otherwise, and the SHA-256 helper adapts to `sha256sum` vs `shasum`. The in-container entry point `run-dockerfile-user-command` carries the same constraint one level down: it must stay POSIX `sh` (busybox ash / dash), since the container shell is not guaranteed to be bash. When adding host-side logic, assume neither GNU coreutils nor bash-only externals are present unless you guard for them.
 
 ## Key Files
 
