@@ -421,11 +421,13 @@ stand-in `hello-installer.run` that prints a license, asks for confirmation and
 an install path, then installs a small `hello` command; swap in your real
 installer and its prompts.
 
-> **Engine note:** the `COPY <<'EOF'` here-document above is a Docker/BuildKit
-> feature. Podman/Buildah does not parse `COPY` here-documents, so this sample
-> builds only under Docker. To drive an installer the same way under Podman, put
-> the `expect` script in a file next to the Dockerfile and `COPY drive-installer.exp /tmp/`
-> instead of using the inline here-document.
+> **Engine note:** the `COPY <<'EOF'` here-document above needs a builder that
+> parses Dockerfile here-documents — Docker/BuildKit, or Podman with a recent
+> Buildah (≥ 1.39, e.g. Debian 13 *trixie* / Podman 5.x). An older Podman/Buildah
+> (such as the Buildah 1.33 bundled with Podman 4.9.x) does not, and fails with
+> `Error: ... copier: stat "/<<EOF": no such file or directory`. If you must build
+> on such a host, put the `expect` script in a file next to the Dockerfile and use
+> `COPY drive-installer.exp /tmp/` instead of the inline here-document.
 
 ## Project structure
 

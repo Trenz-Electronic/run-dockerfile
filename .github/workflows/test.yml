@@ -10,9 +10,9 @@ on:
 jobs:
   test:
     name: Docker tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
-    # ubuntu-latest ships BOTH docker and podman, so pin the engine: otherwise
+    # ubuntu-26.04 ships BOTH docker and podman, so pin the engine: otherwise
     # auto-detect would pick podman and this job would stop exercising Docker.
     env:
       RUN_DOCKERFILE_ENGINE: docker
@@ -42,7 +42,7 @@ jobs:
 
   podman:
     name: Podman tests (rootful + rootless keep-id)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
     - name: Checkout repository
@@ -57,6 +57,17 @@ jobs:
         printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
+
+    - name: Give Podman build containers working DNS
+      # On the ubuntu-26.04 runner the host resolver is the systemd-resolved stub
+      # (127.0.0.53), which is not reachable from inside a Podman build container's
+      # network namespace - so apt-get/apk inside `podman build` fail with
+      # "Temporary failure resolving ...". (ubuntu-24.04 / Podman 4.9 did not hit
+      # this.) Point Podman's containers at public resolvers instead. The system
+      # drop-in is read by both rootful and rootless Podman.
+      run: |
+        sudo mkdir -p /etc/containers/containers.conf.d
+        printf '[containers]\ndns_servers=["1.1.1.1","8.8.8.8"]\n' | sudo tee /etc/containers/containers.conf.d/99-dns.conf
 
     - name: Podman info
       run: |
