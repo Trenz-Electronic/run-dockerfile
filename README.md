@@ -445,12 +445,53 @@ As long as each container directory's `run` symlink points to `run-dockerfile/bu
 
 **Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); run-dockerfile checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
 
+## Container engine: Docker or Podman
+
+run-dockerfile works with **Docker** or **Podman**. You normally don't configure anything — it picks an engine automatically:
+
+- If only one of `docker` / `podman` is installed, it uses that one.
+- If **both** are installed, it prefers **Podman**.
+- If neither is installed, it stops with a clear error.
+
+Override the choice with the `RUN_DOCKERFILE_ENGINE` environment variable (taken verbatim, so you can include `sudo`):
+
+```sh
+RUN_DOCKERFILE_ENGINE=docker ./run make          # force Docker
+RUN_DOCKERFILE_ENGINE="sudo podman" ./run make   # force rootful Podman
+```
+
+To see which engine will be used here, without building or running anything:
+
+```sh
+RUN_DOCKERFILE_PRINT_ENGINE=1 ./run
+```
+
+**Rootful Podman** has no background daemon or `docker`-style group, so it needs `sudo`; run-dockerfile invokes it as `sudo podman` while the script itself keeps running as you, so your files stay owned by you. When both engines are present and you want Docker, set `RUN_DOCKERFILE_ENGINE=docker`.
+
+**Rootless Podman** is opt-in per project, because rootless containers remap user IDs through your `subuid` range — a non-root tool would otherwise write bind-mounted files owned by an unusable shifted UID. Add this directive to the Dockerfile to run rootless and pin your host UID 1:1 so file ownership stays correct:
+
+```Dockerfile
+#run-dockerfile: rootless --userns=keep-id
+FROM debian:12
+```
+
+The value is passed straight to `podman run --userns=...`; `keep-id` is the mode that preserves host file ownership. This directive requires Podman and forces the rootless (non-`sudo`) engine.
+
+**Podman and short image names:** unlike Docker, Podman does not assume Docker Hub for unqualified image names. If a `FROM` line uses a short name that Podman cannot resolve (e.g. `FROM buildpack-deps:bookworm` fails while `FROM alpine` works via Podman's built-in aliases), either add `docker.io` to your Podman config:
+
+```sh
+# system-wide (rootful Podman):
+echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
+```
+
+or fully qualify the image (`FROM docker.io/library/buildpack-deps:bookworm`), which works with both engines.
+
 ## Requirements
 
 **On the host:**
 
-- Linux or macOS with Docker and bash.
-- For foreign-architecture `#run-dockerfile: platform` builds/runs, Docker must have binfmt/QEMU support configured for the requested platform.
+- Linux or macOS with bash and a container engine — **Docker or Podman** (see [Container engine](#container-engine-docker-or-podman)).
+- For foreign-architecture `#run-dockerfile: platform` builds/runs, the engine must have binfmt/QEMU support configured for the requested platform.
 - GNU `tar` is optional; when unavailable, run-dockerfile uses a portable metadata-manifest hash for rebuild detection.
 - `python3` — only when using `#run-dockerfile: http.static`.
 - Linux `ip` command from iproute2 — only when using `#run-dockerfile: http.static` on Linux.

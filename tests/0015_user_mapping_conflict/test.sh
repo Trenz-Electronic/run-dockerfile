@@ -3,6 +3,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 host_group=$(id -gn)
 host_gid=$(id -g)
 conflict_gid=9999
@@ -13,8 +15,8 @@ FROM alpine:latest
 RUN echo "$host_group:x:$conflict_gid::" >> /etc/group
 EOF
 
-# Build image with conflicting group
-docker build -f Dockerfile.tmp -t 0015_user_mapping_conflict . >/dev/null 2>&1
+# Build image with conflicting group (same engine ./run will use)
+$ENGINE build -f Dockerfile.tmp -t 0015_user_mapping_conflict . >/dev/null 2>&1
 
 # Run and check group mapping. If another image group already has the host GID,
 # reverse lookup (`id -gn`) may return that first image group instead of the

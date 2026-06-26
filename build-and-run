@@ -454,12 +454,9 @@ done
 # Remove leading comma from CMDLINE_ENV_VARS
 CMDLINE_ENV_VARS=$(echo "$CMDLINE_ENV_VARS" | sed 's/^,//')
 
-if [ $# -eq 0 ]; then
-  >&2 echo "ERROR: no command specified; no container action was taken."
-  >&2 echo "       Pass a command, for example './run /bin/sh' or './run /bin/bash'."
-  >&2 echo "       Run './run --help' for usage."
-  exit 1
-fi
+# (The "no command specified" check runs later, after engine resolution, so the
+# RUN_DOCKERFILE_PRINT_ENGINE diagnostic can report the engine without a command.
+# The command in "$@" is untouched until the container run is assembled.)
 
 # Build the normalized directive stream that every directive parser below
 # consumes. Two accepted spellings collapse to one canonical "#<keyword>: <value>"
@@ -477,7 +474,7 @@ fi
 build_directive_stream() {
   awk '
     BEGIN {
-      split("platform mount copy.home usermount http.static context option sudo", _k, " ")
+      split("platform mount copy.home usermount http.static context option sudo rootless", _k, " ")
       for (_i in _k) known[_k[_i]] = 1
       plen = length("#run-dockerfile:")
       err = 0
@@ -590,6 +587,119 @@ if [ -f "$dir/Dockerfile" ]; then
   done < <(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*usermount:[[:space:]]*' || true)
 fi
 
+# Parse the rootless directive: "#run-dockerfile: rootless --userns=<mode>".
+# This directive is prefix-only (it has no deprecated unprefixed spelling), its
+# value is mandatory and must be a --userns=<mode> token, and it is passed
+# verbatim to the rootless `podman run`. Presence forces rootless Podman (see
+# resolve_engine). Multiple directives must agree on a single mode.
+ROOTLESS_USERNS=""
+while IFS= read -r _rl_line; do
+  _rl_val=$(printf '%s' "$_rl_line" | sed -E 's/^#[[:space:]]*rootless:[[:space:]]*//; s/[[:space:]]+$//')
+  if [[ ! "$_rl_val" =~ ^--userns=[A-Za-z0-9:=,._-]+$ ]]; then
+    >&2 echo "ERROR: #run-dockerfile: rootless requires a --userns=<mode> value, e.g. #run-dockerfile: rootless --userns=keep-id"
+    exit 1
+  fi
+  if [ -n "$ROOTLESS_USERNS" ] && [ "$ROOTLESS_USERNS" != "$_rl_val" ]; then
+    >&2 echo "ERROR: conflicting #run-dockerfile: rootless directives ('${ROOTLESS_USERNS}' vs '${_rl_val}'); use a single --userns=<mode>."
+    exit 1
+  fi
+  ROOTLESS_USERNS="$_rl_val"
+done < <(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*rootless:[[:space:]]*' || true)
+
+# Resolve the container engine into the ENGINE array (always expanded as
+# "${ENGINE[@]}", so a multi-word engine such as "sudo podman" is passed
+# verbatim) plus ENGINE_KIND (docker|podman). An explicit RUN_DOCKERFILE_ENGINE
+# wins and is taken verbatim; otherwise auto-detect - both engines present
+# defaults to Podman, exactly one present uses it, neither present is a hard
+# error. Rootful Podman has no root daemon/group like Docker, so it is invoked
+# as "sudo podman": this script itself always runs as the real host user (so
+# id -un/-u/-g keep detecting the correct identity), and only the engine
+# invocations are elevated.
+ENGINE=()
+ENGINE_KIND=""
+resolve_engine() {
+  if [ -n "$ROOTLESS_USERNS" ]; then
+    # The rootless directive forces rootless Podman: bare "podman" (no sudo).
+    if ! command -v podman >/dev/null 2>&1; then
+      >&2 echo "ERROR: #run-dockerfile: rootless requires podman, which was not found in PATH."
+      exit 1
+    fi
+    if [ -n "${RUN_DOCKERFILE_ENGINE:-}" ]; then
+      read -r -a _re_override <<< "$RUN_DOCKERFILE_ENGINE"
+      _re_bin=""
+      for _re_w in "${_re_override[@]}"; do
+        case "$_re_w" in sudo|-*) continue ;; *) _re_bin="$_re_w"; break ;; esac
+      done
+      if [ "$(basename "${_re_bin:-}")" != podman ]; then
+        >&2 echo "ERROR: #run-dockerfile: rootless requires podman, but RUN_DOCKERFILE_ENGINE='${RUN_DOCKERFILE_ENGINE}' selects a different engine."
+        exit 1
+      fi
+    fi
+    ENGINE=(podman); ENGINE_KIND=podman
+    return
+  fi
+  if [ -n "${RUN_DOCKERFILE_ENGINE:-}" ]; then
+    read -r -a ENGINE <<< "$RUN_DOCKERFILE_ENGINE"
+    _re_bin=""
+    for _re_w in "${ENGINE[@]}"; do
+      case "$_re_w" in sudo|-*) continue ;; *) _re_bin="$_re_w"; break ;; esac
+    done
+    if [ -z "$_re_bin" ] || ! command -v "$_re_bin" >/dev/null 2>&1; then
+      >&2 echo "ERROR: RUN_DOCKERFILE_ENGINE='${RUN_DOCKERFILE_ENGINE}': command '${_re_bin}' not found in PATH."
+      exit 1
+    fi
+    case "$(basename "$_re_bin")" in
+      podman) ENGINE_KIND=podman ;;
+      *)      ENGINE_KIND=docker ;;
+    esac
+    return
+  fi
+  if command -v podman >/dev/null 2>&1; then
+    ENGINE=(sudo podman); ENGINE_KIND=podman
+  elif command -v docker >/dev/null 2>&1; then
+    ENGINE=(docker); ENGINE_KIND=docker
+  else
+    >&2 echo "ERROR: no container engine found; install Docker or Podman, or set RUN_DOCKERFILE_ENGINE."
+    exit 1
+  fi
+}
+resolve_engine
+
+# Podman's `build` has no --progress flag (it streams build output by default);
+# only Docker/BuildKit accepts --progress=plain. Gate it on the engine kind.
+PROGRESS_ARGS=()
+if [ "$ENGINE_KIND" = docker ]; then
+  PROGRESS_ARGS=(--progress=plain)
+fi
+
+# Rootless Podman run arguments: the --userns=<mode> from the rootless directive
+# (passed verbatim) plus an explicit --user 0. With --userns=keep-id Podman would
+# otherwise default the container to the host UID (non-root), but the entry script
+# must start as (namespaced) root to create the host-matching user and drop
+# privileges with su. Under keep-id, container root maps to a subuid while the host
+# UID maps 1:1, so the su'd user's bind-mount writes land owned by the host user.
+# (Verified in CI; the rootless path cannot run in the local LXC sandbox.)
+ROOTLESS_RUN_ARGS=()
+if [ -n "$ROOTLESS_USERNS" ]; then
+  ROOTLESS_RUN_ARGS=("$ROOTLESS_USERNS" --user 0)
+fi
+
+# RUN_DOCKERFILE_PRINT_ENGINE=1 is a diagnostic: print the resolved engine and
+# exit before any build/run, so you can confirm which engine run-dockerfile will
+# use here. Only the literal value 1 enables it.
+if [ "${RUN_DOCKERFILE_PRINT_ENGINE:-}" = 1 ]; then
+  printf '%s\n' "${ENGINE[*]}"
+  [ -n "$ROOTLESS_USERNS" ] && printf 'userns: %s\n' "$ROOTLESS_USERNS"
+  exit 0
+fi
+
+if [ $# -eq 0 ]; then
+  >&2 echo "ERROR: no command specified; no container action was taken."
+  >&2 echo "       Pass a command, for example './run /bin/sh' or './run /bin/bash'."
+  >&2 echo "       Run './run --help' for usage."
+  exit 1
+fi
+
 # Function to find the git repository root by traversing up from a directory.
 # `.git` is a directory in a normal checkout and a regular file (gitlink) in a
 # worktree, so test with -e rather than -d. Always returns 0 with the repo
@@ -672,7 +782,7 @@ else
 fi
 
 # Optimized inspect: get architecture and context hash in one call
-INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
+INSPECT_DATA=$("${ENGINE[@]}" inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
 
 if [ -n "$INSPECT_DATA" ]; then
   IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
@@ -938,26 +1048,35 @@ PYEOF
           exit 1
         fi
 
-        # Determine an IP address that the container can use to reach this
-        # HTTP server on the host. The strategy is OS-specific because Linux
-        # and macOS expose host networking to containers differently.
-        case "$(uname -s)" in
-          Darwin)
-            # Docker Desktop on macOS injects host.docker.internal into the
-            # container's resolver, pointing at the host. The `ip` command is
-            # not available on macOS, so the Linux probes below would fail.
-            HOST_IP="host.docker.internal"
-            ;;
-          *)
-            # On Linux, use the Docker bridge gateway IP instead of
-            # host.docker.internal (the latter is not injected by default).
-            HOST_IP=$(ip route | awk '/docker0/ {print $9}' | head -n1)
-            if [ -z "$HOST_IP" ]; then
-              # Fallback to getting the default route IP
-              HOST_IP=$(ip route get 1 | awk '{print $7;exit}')
-            fi
-            ;;
-        esac
+        # Determine an address the build container can use to reach this HTTP
+        # server on the host. The strategy is engine- and OS-specific because
+        # each exposes host networking to containers differently.
+        if [ "$ENGINE_KIND" = podman ]; then
+          # Podman injects host.containers.internal into build containers (it
+          # resolves to the host). Podman build containers are not on the
+          # docker0 bridge, so the docker0 gateway IP used for Docker below is
+          # unreachable. (`--add-host=...:host-gateway` is not used: Buildah
+          # 1.28 rejects the host-gateway keyword.)
+          HOST_IP="host.containers.internal"
+        else
+          case "$(uname -s)" in
+            Darwin)
+              # Docker Desktop on macOS injects host.docker.internal into the
+              # container's resolver, pointing at the host. The `ip` command is
+              # not available on macOS, so the Linux probes below would fail.
+              HOST_IP="host.docker.internal"
+              ;;
+            *)
+              # On Linux, use the Docker bridge gateway IP instead of
+              # host.docker.internal (the latter is not injected by default).
+              HOST_IP=$(ip route | awk '/docker0/ {print $9}' | head -n1)
+              if [ -z "$HOST_IP" ]; then
+                # Fallback to getting the default route IP
+                HOST_IP=$(ip route get 1 | awk '{print $7;exit}')
+              fi
+              ;;
+          esac
+        fi
         SERVER_URL="http://${HOST_IP}:${SERVER_PORT}/${HTTP_TOKEN}"
         BUILD_ARGS+=(--build-arg "HTTP_${HTTP_KEY}=${SERVER_URL}")
 
@@ -970,7 +1089,7 @@ EOF
 
     # Build docker image with collected options. Assembled as an array and
     # invoked directly (no eval), so paths/values are passed verbatim.
-    BUILD_CMD=(docker build -t "$tag" --progress=plain)
+    BUILD_CMD=("${ENGINE[@]}" build -t "$tag" "${PROGRESS_ARGS[@]}")
     if [ -n "$BUILD_PLATFORM" ]; then
       # Normalize to OS/arch form - see comment near PLATFORM_ARG below.
       # `# platform: arm64` is accepted with the legacy image store but
@@ -990,17 +1109,20 @@ EOF
 
     >&2 echo "Running: ${BUILD_CMD[*]}"
     # `set -e` plus the armed EXIT/INT/TERM trap handle a failed build: a non-zero
-    # `docker build` exits here and the trap tears down the HTTP servers. On
-    # success we clean up explicitly and disarm the trap before continuing.
-    "${BUILD_CMD[@]}"
+    # build exits here and the trap tears down the HTTP servers. On success we
+    # clean up explicitly and disarm the trap before continuing.
+    # Build output goes to stderr: Podman prints build progress and the image id
+    # to stdout, which would otherwise contaminate `$(./run cmd)` output on a
+    # build-triggering invocation. (Docker/BuildKit already writes to stderr.)
+    "${BUILD_CMD[@]}" >&2
     cleanup_http_servers
     trap - EXIT INT TERM
   else
-    docker build -t "$tag" --progress=plain "$dir"
+    "${ENGINE[@]}" build -t "$tag" "${PROGRESS_ARGS[@]}" "$dir" >&2
   fi
 
   # Update architecture after build (reuse optimized inspect format)
-  INSPECT_DATA=$(docker inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
+  INSPECT_DATA=$("${ENGINE[@]}" inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
   if [ -n "$INSPECT_DATA" ]; then
     IMGARCH=$(echo "$INSPECT_DATA" | cut -d'|' -f1)
   fi
@@ -1036,14 +1158,14 @@ fi
 
 run_tag="${tag}.user-command"
 SCRIPT_HASH=$(host_sha256 < "$USER_COMMAND_SRC")
-BASE_ID=$(docker inspect --format='{{.Id}}' "$tag" 2>/dev/null) || true
+BASE_ID=$("${ENGINE[@]}" inspect --format='{{.Id}}' "$tag" 2>/dev/null) || true
 if [ -z "$BASE_ID" ]; then
   >&2 echo "ERROR: base image ${tag} not found; cannot bake /bin/run-dockerfile-user-command into it."
   exit 1
 fi
 USER_COMMAND_HASH=$(printf '%s|%s' "$BASE_ID" "$SCRIPT_HASH" | host_sha256)
 
-RUN_INSPECT=$(docker inspect --format='{{index .Config.Labels "run-dockerfile.user-command-hash"}}' "$run_tag" 2>/dev/null) || true
+RUN_INSPECT=$("${ENGINE[@]}" inspect --format='{{index .Config.Labels "run-dockerfile.user-command-hash"}}' "$run_tag" 2>/dev/null) || true
 if [ "$RUN_INSPECT" != "$USER_COMMAND_HASH" ]; then
   >&2 echo "Baking /bin/run-dockerfile-user-command into ${run_tag}..."
   # COPY --chmod and the deterministic layer both rely on BuildKit, which this tool
@@ -1056,7 +1178,7 @@ if [ "$RUN_INSPECT" != "$USER_COMMAND_HASH" ]; then
     printf 'FROM %s\n' "$tag"
     printf 'COPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n'
   } > "$RUN_BUILD_CTX/Dockerfile"
-  DERIVE_CMD=(docker build -t "$run_tag" --progress=plain)
+  DERIVE_CMD=("${ENGINE[@]}" build -t "$run_tag" "${PROGRESS_ARGS[@]}")
   # Match the base image architecture so cross-platform images bake correctly.
   if [ -n "$IMGARCH" ]; then
     case "$IMGARCH" in
@@ -1065,7 +1187,9 @@ if [ "$RUN_INSPECT" != "$USER_COMMAND_HASH" ]; then
     esac
   fi
   DERIVE_CMD+=(--label "run-dockerfile.user-command-hash=${USER_COMMAND_HASH}" "$RUN_BUILD_CTX")
-  if ! "${DERIVE_CMD[@]}"; then
+  # Build output to stderr (see the base build above): keep stdout clean for the
+  # user command.
+  if ! "${DERIVE_CMD[@]}" >&2; then
     rm -rf "$RUN_BUILD_CTX"
     >&2 echo "ERROR: failed to bake /bin/run-dockerfile-user-command into ${run_tag}."
     exit 1
@@ -1261,11 +1385,67 @@ if [ -n "$ENV_VARS" ]; then
   PRESERVE_ENV_ARG=(-e "DOCKER_PRESERVE_ENV=$ENV_VARS")
 fi
 
+# Expand inherit-form env options ("-e NAME" / "--env NAME" / "--env=NAME" with no
+# "=value") to "NAME=value" using THIS process's environment, then store the result
+# in EXPANDED_ENV_ARGS. The engine otherwise reads the value from its own
+# environment, which `sudo podman` cannot see: sudo resets the environment, so a
+# bare "-e NAME" would arrive empty. Doing the lookup host-side fixes that and is
+# behaviour-identical for Docker (an inherit "-e NAME" with NAME set equals
+# "-e NAME=value"). A NAME that is unset on the host is left as the bare inherit
+# form, so its name is still added to the preserve list and the container defines
+# it empty (the documented #option: -e behaviour; regression-tested by tests/0037).
+expand_env_inherit() {
+  EXPANDED_ENV_ARGS=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -e|--env)
+        if [ "$#" -ge 2 ]; then
+          _ee_flag=$1; _ee_val=$2; shift 2
+          case "$_ee_val" in
+            *=*) EXPANDED_ENV_ARGS+=("$_ee_flag" "$_ee_val") ;;
+            *)
+              if [[ "$_ee_val" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && [ -n "${!_ee_val+x}" ]; then
+                EXPANDED_ENV_ARGS+=("$_ee_flag" "$_ee_val=${!_ee_val}")
+              else
+                EXPANDED_ENV_ARGS+=("$_ee_flag" "$_ee_val")
+              fi
+              ;;
+          esac
+        else
+          EXPANDED_ENV_ARGS+=("$1"); shift
+        fi
+        ;;
+      --env=*)
+        _ee_val=${1#--env=}
+        case "$_ee_val" in
+          *=*) EXPANDED_ENV_ARGS+=("$1") ;;
+          *)
+            if [[ "$_ee_val" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && [ -n "${!_ee_val+x}" ]; then
+              EXPANDED_ENV_ARGS+=("--env=$_ee_val=${!_ee_val}")
+            else
+              EXPANDED_ENV_ARGS+=("$1")
+            fi
+            ;;
+        esac
+        shift
+        ;;
+      *)
+        EXPANDED_ENV_ARGS+=("$1"); shift
+        ;;
+    esac
+  done
+}
+expand_env_inherit "${CMDLINE_ENV_ARGS[@]}"
+CMDLINE_ENV_ARGS=("${EXPANDED_ENV_ARGS[@]}")
+expand_env_inherit "${DOCKER_OPTIONS[@]}"
+DOCKER_OPTIONS=("${EXPANDED_ENV_ARGS[@]}")
+
 # Identify the host user from `id`, not the $USER env var: `id` is authoritative
 # and always present, whereas $USER can be empty (cron, CI, `env -i`) or stale
 # (e.g. after `su -m`), which would create a mismatched or malformed container
 # user. The UID, GID and group name already come from `id` for the same reason.
-DOCKER_RUN_CMD=(docker run --rm -i "${TFLAG[@]}" \
+DOCKER_RUN_CMD=("${ENGINE[@]}" run --rm -i "${TFLAG[@]}" \
+  "${ROOTLESS_RUN_ARGS[@]}" \
   -v "$MDIR:$MDIR" \
   "${COPY_HOME_VARG[@]}" \
   "${USERMOUNT_VARGS[@]}" \

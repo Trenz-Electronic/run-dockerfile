@@ -6,6 +6,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 host_user=$(id -un)
 host_uid=$(id -u)
 host_gid=$(id -g)
@@ -20,7 +22,7 @@ FROM alpine:latest
 RUN echo "$host_user:x:$conflict_id:$conflict_id::/home/$host_user:/bin/sh" >> /etc/passwd && echo "$host_user:x:$conflict_id:" >> /etc/group
 EOF
 
-docker build -f Dockerfile.tmp -t 0026_user_mapping_uid_conflict . >/dev/null 2>&1
+$ENGINE build -f Dockerfile.tmp -t 0026_user_mapping_uid_conflict . >/dev/null 2>&1
 
 container_uid=$(./run id -u 2>/dev/null)
 container_gid=$(./run id -g 2>/dev/null)

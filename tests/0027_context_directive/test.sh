@@ -3,6 +3,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 container_dir="0027_context_directive"
@@ -13,7 +15,7 @@ cleanup_generated() {
 }
 
 cleanup_generated
-docker rmi -f 0027_context_directive 2>/dev/null || true
+$ENGINE rmi -f 0027_context_directive 2>/dev/null || true
 mkdir -p "$container_dir"
 ln -sf ../../../build-and-run "$container_dir/run"
 
@@ -53,7 +55,7 @@ fi
 
 echo ""
 echo "=== Test 3: Forced rebuild picks up changed named-context content ==="
-docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
+$ENGINE rmi -f 0027_context_directive >/dev/null 2>&1 || true
 output=$(cd "$container_dir" && ./run cat /tmp/context-marker.txt) || {
     echo "FAIL: Forced rebuild failed"
     fail=1
@@ -67,7 +69,7 @@ fi
 
 echo ""
 echo "=== Test 4: Missing local named context path fails clearly ==="
-docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
+$ENGINE rmi -f 0027_context_directive >/dev/null 2>&1 || true
 cat > "$container_dir/Dockerfile" <<'EOF'
 #context: missing=missing-context-dir
 FROM alpine:latest
@@ -91,7 +93,7 @@ fi
 
 echo ""
 echo "=== Test 5: Pass-through docker-image named context value ==="
-docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
+$ENGINE rmi -f 0027_context_directive >/dev/null 2>&1 || true
 cat > "$container_dir/Dockerfile" <<'EOF'
 #context: base=docker-image://alpine:latest
 FROM alpine:latest
@@ -110,7 +112,7 @@ fi
 
 echo ""
 echo "=== Test 6: Invalid context name fails before docker build ==="
-docker rmi -f 0027_context_directive >/dev/null 2>&1 || true
+$ENGINE rmi -f 0027_context_directive >/dev/null 2>&1 || true
 cat > "$container_dir/Dockerfile" <<'EOF'
 #context: BAD=../extra context
 FROM alpine:latest

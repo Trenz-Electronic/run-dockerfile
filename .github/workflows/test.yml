@@ -9,7 +9,13 @@ on:
 
 jobs:
   test:
+    name: Docker tests
     runs-on: ubuntu-latest
+
+    # ubuntu-latest ships BOTH docker and podman, so pin the engine: otherwise
+    # auto-detect would pick podman and this job would stop exercising Docker.
+    env:
+      RUN_DOCKERFILE_ENGINE: docker
 
     strategy:
       matrix:
@@ -33,3 +39,59 @@ jobs:
 
     - name: Run test suite
       run: tests/run --all
+
+  podman:
+    name: Podman tests (rootful + rootless keep-id)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Configure Podman to resolve unqualified images from Docker Hub
+      # Podman (unlike Docker) does not assume docker.io for unqualified image
+      # names. Dockerfiles commonly use short names (e.g. buildpack-deps:bookworm),
+      # so add docker.io to the unqualified-search list for both rootful and
+      # rootless Podman.
+      run: |
+        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
+        mkdir -p "$HOME/.config/containers"
+        printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
+
+    - name: Podman info
+      run: |
+        podman version
+        echo "rootless mode: $(podman info --format '{{.Host.Security.Rootless}}')"
+        grep -H "^$(id -un):" /etc/subuid /etc/subgid || true
+
+    # Diagnostic only (never fails the job): report the ground-truth keep-id
+    # behavior - what UID the container defaults to, and whether a su'd
+    # host-UID user's bind-mount writes land owned by the host UID. This mirrors
+    # run-dockerfile's start-as-root -> useradd -> su-down model and tells us
+    # whether the rootless run needs an explicit --user 0 alongside keep-id.
+    - name: keep-id ownership spike (diagnostic)
+      run: |
+        set -x
+        uid=$(id -u)
+        img=docker.io/library/alpine:latest
+        echo "--- A) keep-id default container user ---"
+        podman run --rm --userns=keep-id "$img" id || true
+        echo "--- B) keep-id + --user 0: create host-UID user, su down, write bind mount ---"
+        out=$(mktemp -d)
+        podman run --rm --userns=keep-id --user 0 -v "$out:/out" "$img" \
+          sh -c "adduser -D -u $uid tester 2>/dev/null || true; su tester -c 'touch /out/probe; id'" || true
+        ls -ln "$out" || true
+
+    - name: Engine selection + rootless directive (stub-based, no daemon)
+      run: tests/run 0044 0045
+
+    - name: Rootless keep-id ownership (real rootless podman)
+      run: tests/run 0046
+
+    - name: Rootful Podman - engine abstraction across the suite
+      # Force rootful podman (sudo is passwordless on the runner). Cross-arch
+      # (0002-0004) is covered by the Docker job's QEMU setup; 0046 ran above.
+      run: |
+        LIST=$(ls -d tests/[0-9]*/ | xargs -n1 basename | grep -vE '^000[234]_|^0046_' | tr '\n' ' ')
+        echo "Rootful podman suite: $LIST"
+        RUN_DOCKERFILE_ENGINE="sudo podman" tests/run $LIST
