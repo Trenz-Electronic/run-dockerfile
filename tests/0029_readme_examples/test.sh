@@ -3,6 +3,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$test_dir/../.." && pwd)"
@@ -12,7 +14,7 @@ project="$workspace/project"
 original_home="$HOME"
 
 cleanup() {
-    docker rmi -f my-container readme-option readme-option-spaces readme-mount \
+    $ENGINE rmi -f my-container readme-option readme-option-spaces readme-mount \
         readme-copy-home readme-usermount-env readme-usermount-multiple \
         readme-http-static readme-context-local readme-sudo readme-tz-alpine \
         readme-tz-locale-debian readme-tz-locale-debian-regional \
@@ -452,6 +454,15 @@ fi
 
 echo ""
 echo "=== Run non-interactive installer (expect) README sample ==="
+case "$ENGINE" in
+*podman*)
+    # The installer-01-expect sample uses a Dockerfile here-document
+    # (COPY <<'EOF'), a Docker/BuildKit feature. Podman/Buildah (through at
+    # least 4.9.3 / Buildah 1.33) does not parse COPY heredocs, so this sample
+    # only builds under Docker; the Docker job covers it.
+    echo "SKIP: non-interactive installer (expect) README sample (COPY heredoc needs Docker/BuildKit; Podman/Buildah lacks it)"
+    ;;
+*)
 # Build a stand-in for an interactive vendor installer. Its prompt strings must
 # stay in sync with the expect sample in README.md (installer-01-expect); if they
 # drift, the expect script times out and this test fails (which is the point).
@@ -489,6 +500,8 @@ else
     echo "FAIL: non-interactive installer (expect) README sample produced unexpected output: '$output'"
     fail=1
 fi
+    ;;
+esac
 
 echo ""
 echo "=== Dockerfile directive samples use the #run-dockerfile: prefix ==="

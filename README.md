@@ -421,6 +421,12 @@ stand-in `hello-installer.run` that prints a license, asks for confirmation and
 an install path, then installs a small `hello` command; swap in your real
 installer and its prompts.
 
+> **Engine note:** the `COPY <<'EOF'` here-document above is a Docker/BuildKit
+> feature. Podman/Buildah does not parse `COPY` here-documents, so this sample
+> builds only under Docker. To drive an installer the same way under Podman, put
+> the `expect` script in a file next to the Dockerfile and `COPY drive-installer.exp /tmp/`
+> instead of using the inline here-document.
+
 ## Project structure
 
 run-dockerfile is flexible about where you place your container directories. The example structure, which is in no way enforced, is:
