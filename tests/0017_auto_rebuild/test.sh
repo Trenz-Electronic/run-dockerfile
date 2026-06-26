@@ -10,10 +10,12 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 # Clean up any existing image
-docker rmi -f 0017_auto_rebuild 2>/dev/null || true
+$ENGINE rmi -f 0017_auto_rebuild 2>/dev/null || true
 
 # Change to container subdirectory (so test.sh isn't in build context)
 cd 0017_auto_rebuild
@@ -33,7 +35,7 @@ esac
 
 echo ""
 echo "=== Test 2: Verify hash label was stored ==="
-hash_label=$(docker inspect --format='{{index .Config.Labels "run-dockerfile.context-hash"}}' 0017_auto_rebuild 2>/dev/null)
+hash_label=$($ENGINE inspect --format='{{index .Config.Labels "run-dockerfile.context-hash"}}' 0017_auto_rebuild 2>/dev/null)
 hash_length=$(echo "$hash_label" | wc -c)
 if [ -n "$hash_label" ] && [ "$hash_length" -eq 65 ]; then
     short_hash=$(echo "$hash_label" | cut -c1-12)

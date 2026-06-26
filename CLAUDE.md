@@ -21,6 +21,9 @@ run-dockerfile is a single-script Docker workflow tool that automates image buil
   the host. See the two-file note under Architecture.
 - `tests/lib/portable.sh` - POSIX `/bin/sh` helpers for test-only host portability
   checks. Product portability helpers belong in `build-and-run`.
+- `tests/lib/engine.sh` - POSIX `/bin/sh` helper that resolves the container
+  engine a test should use for its OWN image manipulation (fixtures, `rmi`,
+  `inspect`), mirroring `build-and-run` so the test targets the same image store.
 - `README.md` - User documentation. In the README.md, the focus is on what it does for users, including technical details only when necessary for using the run-dockerfile. The implementation details should go into CLAUDE.md.
 
 ## Dockerfile Directive Syntax
@@ -41,6 +44,7 @@ lines and reported with a one-time deprecation warning on stderr.
 | `#run-dockerfile: context name=value` | Anywhere | `#context:` (first 20) | Pass BuildKit named contexts to `docker build` |
 | `#run-dockerfile: option <docker-args>` | Anywhere | `#option:` (first 20) | Pass additional args to `docker run` |
 | `#run-dockerfile: sudo all` | Anywhere | `#sudo:` (first 20) | Create sudoers entry for container user |
+| `#run-dockerfile: rootless --userns=<mode>` | Anywhere | *(prefix-only)* | Force rootless Podman with the given user namespace |
 
 **Directive normalization**: `build_directive_stream()` (one awk pass, run before any directive parsing) rewrites both spellings into a single canonical `#<keyword>: <value>` stream in Dockerfile order, which every parser then consumes instead of re-reading the Dockerfile. Prefixed lines (`^#run-dockerfile:` at column 1) are honored anywhere; a prefixed line with no whitespace after the colon, an empty/missing keyword, or an unknown keyword is a hard error (the prefix signals intent, so it is reported, not ignored). Unprefixed known directives in the first 20 lines are emitted verbatim and collected for the deprecation warning. Order is preserved so `#platform:` (first match) and `#sudo:` (last match) keep their meaning. Regression-tested by `tests/0043`.
 
@@ -91,7 +95,32 @@ The host driver **bakes the in-container entry script** (`run-dockerfile-user-co
 
 `#http.static:` starts one throwaway Python HTTP server **per directive**, each on its own random port published to the build as `HTTP_<KEY>=<url>`. Each server writes its port to a **distinct** temp file (`/tmp/run-dockerfile-http-port-$$-<n>.txt`) so a second directive never reads a previous server's stale port; the host side waits up to 30 seconds for each port file before failing. The shared server script and all port files are removed by `cleanup_http_servers`, which is armed via an `EXIT`/`INT`/`TERM` trap before any server starts (regression-tested by `tests/0030`).
 
-The script always enables Docker BuildKit (`export DOCKER_BUILDKIT=1` before `docker build`) — the modern build path (the engine default since Docker 23.0) and a prerequisite for `RUN --mount`, cache mounts, build secrets, and named contexts. run-dockerfile assumes BuildKit is present and does not support the legacy builder; the override is forced on unconditionally, so a pre-set `DOCKER_BUILDKIT=0` in the environment is ignored.
+The script always enables Docker BuildKit (`export DOCKER_BUILDKIT=1` before `docker build`) — the modern build path (the engine default since Docker 23.0) and a prerequisite for `RUN --mount`, cache mounts, build secrets, and named contexts. run-dockerfile assumes BuildKit is present and does not support the legacy builder; the override is forced on unconditionally, so a pre-set `DOCKER_BUILDKIT=0` in the environment is ignored. Podman ignores the unknown `DOCKER_BUILDKIT` env var, so the export is harmless under Podman.
+
+### Container Engine Selection (Docker / Podman)
+
+run-dockerfile drives **Docker or Podman**. The engine is never hardcoded: every `build`/`run`/`inspect` invocation expands the `ENGINE` bash array (`"${ENGINE[@]}"`), and `ENGINE_KIND` (`docker`|`podman`) gates the few per-engine differences. `resolve_engine()` runs after directive parsing:
+
+- **Explicit override wins:** `RUN_DOCKERFILE_ENGINE` is taken verbatim and word-split into `ENGINE` (e.g. `docker`, `podman`, `sudo podman`, `sudo -n podman`); if its binary is not on `PATH` the run fails with a clear message.
+- **Otherwise auto-detect:** both engines present defaults to **Podman**, exactly one present uses it, neither present is a hard error.
+- **Rootful Podman ⇒ `sudo podman`.** Podman has no root daemon or `docker`-style group, so rootful access needs `sudo`. The script itself always runs as the **real host user** (so `id -un`/`id -u`/`id -g` keep detecting the correct identity for user mapping); only the engine invocations are elevated — there is no `SUDO_UID` juggling. A `RUN_DOCKERFILE_PRINT_ENGINE=1` diagnostic prints the resolved engine (and, when rootless, the `userns:` arg) and exits before any build/run, so you can confirm which engine will be used. Regression-tested by `tests/0044`.
+
+Per-engine differences handled in the host driver:
+
+- **`--progress=plain`** is a Docker/BuildKit flag (Podman `build` has no `--progress`); it is added only when `ENGINE_KIND = docker` (`PROGRESS_ARGS`).
+- **Build output goes to stderr** (`"${BUILD_CMD[@]}" >&2`, likewise the derive build): Podman writes build progress and the image id to **stdout**, which would otherwise contaminate `$(./run cmd)` on a build-triggering invocation. Docker/BuildKit already writes to stderr, so this is a no-op there.
+- **`#http.static:` host address is engine-aware:** Docker uses the `docker0` bridge gateway IP; Podman build containers are not on that bridge, so `HOST_IP="host.containers.internal"` (which Podman injects into build containers) is used instead. `--add-host=...:host-gateway` is deliberately **not** used — Buildah 1.28 rejects the `host-gateway` keyword.
+- **Inherit-form env options are expanded host-side.** `expand_env_inherit()` rewrites `-e NAME` / `--env NAME` / `--env=NAME` (no `=value`) to `NAME=value` using the host environment before the run. The engine otherwise reads the value from its own environment, which `sudo podman` cannot see (sudo resets the environment), so a bare `-e NAME` would arrive empty. Behaviour-identical for Docker; an unset host `NAME` is left as the bare inherit form so it is still added to the preserve list and the container defines it empty (regression-tested by `tests/0037`).
+
+**Not handled — Podman short image names:** Podman (unlike Docker) does not assume `docker.io` for unqualified image names; it resolves only short-name aliases (`alpine`, `debian`, `ubuntu`, …) unless `unqualified-search-registries` is configured. run-dockerfile passes `FROM` lines through verbatim and deliberately does **not** rewrite them, so a Dockerfile with e.g. `FROM buildpack-deps:bookworm` fails under an unconfigured Podman. This is host configuration, not a run-dockerfile concern; it is documented in README.md, and the CI Podman job sets `unqualified-search-registries = ["docker.io"]` so the README-sample test (`tests/0029`, which uses `buildpack-deps`) resolves. (`tests/0029` therefore needs a Docker-Hub-resolving Podman; it passes under Docker and under a so-configured Podman.)
+
+**Rootless Podman** is opt-in via the `#run-dockerfile: rootless --userns=<mode>` directive. Docker and Podman keep **separate image stores** (`/var/lib/containers` vs `~/.local/share/containers` for rootless), so the first run under a newly selected engine rebuilds; the test runner and tests resolve the same engine (`tests/lib/engine.sh`) so fixtures and teardown target the matching store.
+
+**`#run-dockerfile: rootless --userns=<mode>` directive:**
+- **Prefix-only** — a brand-new directive, so it has **no** deprecated unprefixed (`#rootless:`) spelling. It is registered only in `build_directive_stream()`'s prefixed `known` list; an unprefixed `#rootless:` line is treated as a plain comment.
+- The value is **mandatory** and must be a `--userns=<mode>` token (validated `^--userns=[A-Za-z0-9:=,._-]+$`); it is passed **verbatim** to `podman run`. Multiple `rootless` directives must agree on a single mode.
+- Presence **forces rootless Podman**: `ENGINE=(podman)` with **no** sudo. It requires `podman` on `PATH` (else a hard error), and conflicts with a non-Podman `RUN_DOCKERFILE_ENGINE` (e.g. `docker`) — also a hard error.
+- **Why rootless needs `--userns=keep-id`:** rootless Podman runs in a user namespace that remaps the container's UIDs through the invoking user's `subuid` range, so a non-root in-container process would write bind-mounted files owned by a shifted subuid (e.g. `100999`) rather than the host UID. `keep-id` pins the host UID 1:1, restoring run-dockerfile's core invariant (bind-mounted files owned by the host user). Other modes (`host`, `nomap`, …) are accepted and passed through but reintroduce the ownership shift. The `--userns` arg rides on `podman run` only (`ROOTLESS_RUN_ARGS`), not on `build` (rootless builds just use the rootless image store). Regression-tested by `tests/0045` (parsing/validation/conflict, stub-based) and `tests/0046` (keep-id host-UID ownership against a real rootless Podman; skips where rootless Podman is unavailable, e.g. inside an unprivileged LXC container).
 
 ### Smart Rebuild Detection
 
@@ -193,3 +222,6 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0041_missing_option_value` - Tests split-form docker run options fail clearly when their required value is missing
 - `0042_help_usage` - Tests host-side `--help`/usage exits successfully without requiring Docker
 - `0043_directive_prefix` - Tests the `#run-dockerfile:` directive prefix (honored anywhere incl. after line 20, whitespace required after the colon, `#` must be column 1, unknown keyword is a hard error, the deprecated unprefixed form still works and emits a deprecation warning, old and new forms accumulate)
+- `0044_engine_selection` - Tests container-engine selection (`RUN_DOCKERFILE_ENGINE` override taken verbatim; auto-detect with both present defaulting to Podman, exactly one used, neither a hard error; rootful Podman ⇒ `sudo podman`) deterministically via a symlink-farm `PATH` and the `RUN_DOCKERFILE_PRINT_ENGINE` diagnostic — no real daemon
+- `0045_rootless_directive` - Tests the `#run-dockerfile: rootless --userns=<mode>` directive (forces bare `podman` + verbatim userns arg; mandatory well-formed value; prefix-only; honored after line 20; conflict with `RUN_DOCKERFILE_ENGINE=docker` and missing-podman are hard errors) via stubs, no daemon
+- `0046_rootless_ownership` - Integration test: under real rootless Podman with `--userns=keep-id`, a bind-mounted file written by the in-container host-matching user is owned by the **host UID** (not a subuid). Skips with a clear message where rootless Podman cannot run (no podman, or an unprivileged LXC container)

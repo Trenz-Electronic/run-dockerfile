@@ -4,6 +4,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 host_user=$(id -un)
 host_group=$(id -gn)
 host_uid=$(id -u)
@@ -28,7 +30,7 @@ expected_group="${host_group}_${host_gid}_a"
 
 cleanup() {
     rm -f Dockerfile.tmp
-    docker rmi -f 0039_user_group_fallback_collision 2>/dev/null || true
+    $ENGINE rmi -f 0039_user_group_fallback_collision 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
@@ -40,7 +42,7 @@ RUN echo "$host_user:x:$conflict_uid:$conflict_gid::/home/$host_user:/bin/sh" >>
  && echo "${host_group}_${host_gid}:x:$group_fallback_conflict_gid:" >> /etc/group
 EOF
 
-docker build -f Dockerfile.tmp -t 0039_user_group_fallback_collision . >/dev/null 2>&1
+$ENGINE build -f Dockerfile.tmp -t 0039_user_group_fallback_collision . >/dev/null 2>&1
 
 container_uid=$(./run id -u)
 container_gid=$(./run id -g)

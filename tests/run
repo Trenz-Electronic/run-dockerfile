@@ -9,6 +9,18 @@ CLEANUP=1
 RUN_TESTS=1
 TEST_PATTERNS=""
 
+# Resolve the same container engine build-and-run will use, so teardown targets
+# the right image store (Docker and Podman keep separate stores). Mirrors
+# build-and-run's resolution: explicit RUN_DOCKERFILE_ENGINE wins, else
+# auto-detect with Podman preferred (rootful Podman => "sudo podman").
+if [ -n "${RUN_DOCKERFILE_ENGINE:-}" ]; then
+    ENGINE="$RUN_DOCKERFILE_ENGINE"
+elif command -v podman >/dev/null 2>&1; then
+    ENGINE="sudo podman"
+else
+    ENGINE="docker"
+fi
+
 # Parse arguments
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -32,8 +44,8 @@ cleanup() {
     for dir in "$SCRIPT_DIR"/*/; do
         [ -d "$dir" ] || continue
         name=$(basename "$dir")
-        docker rm -f "$name" 2>/dev/null || true
-        docker rmi -f "$name" 2>/dev/null || true
+        $ENGINE rm -f "$name" 2>/dev/null || true
+        $ENGINE rmi -f "$name" "$name.user-command" 2>/dev/null || true
     done
 }
 
