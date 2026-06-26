@@ -454,15 +454,9 @@ fi
 
 echo ""
 echo "=== Run non-interactive installer (expect) README sample ==="
-case "$ENGINE" in
-*podman*)
-    # The installer-01-expect sample uses a Dockerfile here-document
-    # (COPY <<'EOF'), a Docker/BuildKit feature. Podman/Buildah (through at
-    # least 4.9.3 / Buildah 1.33) does not parse COPY heredocs, so this sample
-    # only builds under Docker; the Docker job covers it.
-    echo "SKIP: non-interactive installer (expect) README sample (COPY heredoc needs Docker/BuildKit; Podman/Buildah lacks it)"
-    ;;
-*)
+# This sample uses a Dockerfile COPY here-document, which needs Docker/BuildKit or
+# Podman with Buildah >= 1.39. CI runs the Podman job on ubuntu-26.04 so its Buildah
+# is new enough; an older Podman/Buildah cannot build it (see README.md engine note).
 # Build a stand-in for an interactive vendor installer. Its prompt strings must
 # stay in sync with the expect sample in README.md (installer-01-expect); if they
 # drift, the expect script times out and this test fails (which is the point).
@@ -500,8 +494,6 @@ else
     echo "FAIL: non-interactive installer (expect) README sample produced unexpected output: '$output'"
     fail=1
 fi
-    ;;
-esac
 
 echo ""
 echo "=== Dockerfile directive samples use the #run-dockerfile: prefix ==="
