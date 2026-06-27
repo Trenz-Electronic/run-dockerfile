@@ -1,8 +1,8 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY (workflow_dispatch). v12: copy.home under rootless keep-id puts
-# files in the arg-HOME (/home/runner) but `~` resolves to the workdir. Dump HOME,
-# the runner passwd entry, and where files actually landed to pinpoint the fix.
+# DIAGNOSTIC-ONLY (workflow_dispatch). v13: validate both rootless fixes
+# ($USER normalization + HOME override for the keep-id-injected passwd entry)
+# against all 4 previously-failing tests.
 on:
   workflow_dispatch:
 
@@ -12,31 +12,16 @@ jobs:
     env:
       RUN_DOCKERFILE_ENGINE: podman
       RUN_DOCKERFILE_USERNS: keep-id
+      RUN_DOCKERFILE_CELL_CAPS: 'cgroups gnu-stat python3 linux rootless-podman'
     steps:
     - uses: actions/checkout@v6
     - name: Configure Podman registries (rootless)
       run: |
+        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
-    - name: Diagnose copy.home HOME resolution
+    - name: Run previously-failing tests with both fixes
       run: |
         set +e
-        REPO="$PWD"
-        echo "host HOME=$HOME"
-        echo "test license content" > "$HOME/.test-license-0019.dat"
-        D=/tmp/probe-cphome; rm -rf "$D"; mkdir -p "$D"; cd "$D"
-        cat > Dockerfile <<'EOF'
-        #copy.home: .test-license-0019.dat
-        FROM alpine:latest
-        EOF
-        ln -sf "$REPO/build-and-run" run
-        ./run sh -c '
-          echo "container HOME=$HOME";
-          echo "--- whoami/id ---"; id;
-          echo "--- passwd runner ---"; grep "^runner:" /etc/passwd || echo "(no runner entry)";
-          echo "--- passwd uid 1001 ---"; awk -F: "\$3==1001" /etc/passwd || true;
-          echo "--- ls /home/runner ---"; ls -la /home/runner 2>&1;
-          echo "--- ls -a workdir ($PWD) ---"; ls -la . 2>&1;
-          echo "--- find license ---"; find / -name ".test-license-0019.dat" 2>/dev/null;
-        '
+        tests/run 0019 0021 0029 0036
         echo "rc=$?"

@@ -233,6 +233,16 @@ if [ -n "$DOCKER_PRESERVE_ENV" ]; then
   IFS="$OLD_IFS"
 fi
 
+# Force HOME to the host home path ($HOME, this script's 5th argument) that we
+# created and into which #copy.home: files were extracted. su would otherwise
+# derive HOME from the target user's /etc/passwd entry - which is correct when we
+# wrote that entry, but rootless Podman's --userns=keep-id pre-injects a passwd
+# entry whose home field is the *working directory*, not the host $HOME. Reusing
+# that entry (its uid/gid match the host) would land the command in the wrong HOME
+# and make ~ and #copy.home: files unreachable. Prepending HOME as a leading env
+# assignment overrides whatever su set, on every engine (a no-op when they agree).
+set -- "HOME=$HOME" "$@"
+
 # Use su to drop privileges (no sudo required in container)
 if ! command -v su >/dev/null 2>&1; then
   >&2 echo "ERROR: 'su' command not found in container"
