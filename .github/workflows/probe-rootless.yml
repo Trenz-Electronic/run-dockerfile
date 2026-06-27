@@ -1,6 +1,6 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY (workflow_dispatch). v10: 0036 fixed; 0019/0021/0029 still fail
+# DIAGNOSTIC-ONLY (workflow_dispatch). v11: 0036 fixed; 0019/0021/0029 still fail
 # (ubuntu/debian base + copy.home/usermount) and dash set -e hides the error.
 # Reproduce 0019 Test 2 and a usermount case directly with the REAL (fixed)
 # build-and-run, capturing full stderr + the wrapped podman commands.
@@ -29,7 +29,7 @@ jobs:
         mkdir -p "$HOME/.config/test-tool-0019"; echo "test config" > "$HOME/.config/test-tool-0019/config.json"
 
         echo "########## A: copy.home multiple, FROM ubuntu:22.04 ##########"
-        A=$(mktemp -d); cd "$A"
+        A=/tmp/probe-a-cphome; rm -rf "$A"; mkdir -p "$A"; cd "$A"
         cat > Dockerfile <<'EOF'
         #copy.home: .test-license-0019.dat
         #copy.home: .config/test-tool-0019/config.json
@@ -42,7 +42,7 @@ jobs:
 
         echo
         echo "########## B: copy.home single, FROM ubuntu:22.04 (isolate base vs count) ##########"
-        B=$(mktemp -d); cd "$B"
+        B=/tmp/probe-b-cphome; rm -rf "$B"; mkdir -p "$B"; cd "$B"
         cat > Dockerfile <<'EOF'
         #copy.home: .test-license-0019.dat
         FROM ubuntu:22.04
@@ -54,7 +54,7 @@ jobs:
 
         echo
         echo "########## C: usermount, FROM ubuntu:22.04 ##########"
-        C=$(mktemp -d); cd "$C"
+        C=/tmp/probe-c-usermount; rm -rf "$C"; mkdir -p "$C"; cd "$C"
         cat > Dockerfile <<'EOF'
         #usermount: /tmp/probe-um-0021
         FROM ubuntu:22.04
@@ -66,7 +66,7 @@ jobs:
 
         echo
         echo "########## D: copy.home single FROM alpine (control, expect PASS) ##########"
-        D=$(mktemp -d); cd "$D"
+        D=/tmp/probe-d-alpine; rm -rf "$D"; mkdir -p "$D"; cd "$D"
         cat > Dockerfile <<'EOF'
         #copy.home: .test-license-0019.dat
         FROM alpine:latest
