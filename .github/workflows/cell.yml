@@ -72,12 +72,16 @@ jobs:
 
     - name: Ensure Podman machine (macOS)
       if: ${{ inputs.setup-podman-machine }}
-      # The self-hosted macOS runner runs Podman inside a VM ("podman machine").
-      # Make sure one exists and is running (idempotent across runs), and resolve
-      # short image names from docker.io inside the VM (best-effort).
+      # The self-hosted macOS runner runs Podman inside a pre-provisioned VM
+      # ("podman machine", default rootless connection). Start it if stopped, make
+      # docker.io resolve short image names inside the VM, then VERIFY connectivity:
+      # `podman info` is deliberately NOT swallowed, so an unreachable/unprovisioned
+      # machine fails the cell loudly instead of producing dozens of confusing
+      # per-test "connection refused" errors.
       run: |
-        podman machine init --now 2>/dev/null || podman machine start 2>/dev/null || true
+        podman machine start 2>/dev/null || true
         podman machine ssh 'printf "unqualified-search-registries = [\"docker.io\"]\n" | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf' 2>/dev/null || true
+        podman info >/dev/null
 
     - name: Engine info
       run: |

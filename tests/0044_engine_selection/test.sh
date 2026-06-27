@@ -40,7 +40,9 @@ check() {
     desc="$1"; override="$2"; expected="$3"; shift 3
     rm -f "$BIN/docker" "$BIN/podman"
     for e in "$@"; do make_stub "$e"; done
-    if out=$(PATH="$BIN" RUN_DOCKERFILE_ENGINE="$override" RUN_DOCKERFILE_PRINT_ENGINE=1 ./run 2>&1); then
+    # Clear any ambient RUN_DOCKERFILE_USERNS (e.g. the rootless CI cell sets it
+    # job-wide) so it cannot override the engine resolution this test pins.
+    if out=$(PATH="$BIN" RUN_DOCKERFILE_USERNS= RUN_DOCKERFILE_ENGINE="$override" RUN_DOCKERFILE_PRINT_ENGINE=1 ./run 2>&1); then
         rc=0
     else
         rc=1

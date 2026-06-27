@@ -31,7 +31,9 @@ make_stub docker
 make_stub podman
 
 run_engine() { # OVERRIDE -> stdout+stderr, sets global RC
-    if out=$(PATH="$BIN" RUN_DOCKERFILE_ENGINE="$1" RUN_DOCKERFILE_PRINT_ENGINE=1 ./run 2>&1); then
+    # Clear any ambient RUN_DOCKERFILE_USERNS (e.g. the rootless CI cell sets it
+    # job-wide) so it cannot override the engine resolution under test.
+    if out=$(PATH="$BIN" RUN_DOCKERFILE_USERNS= RUN_DOCKERFILE_ENGINE="$1" RUN_DOCKERFILE_PRINT_ENGINE=1 ./run 2>&1); then
         RC=0
     else
         RC=1
