@@ -698,6 +698,18 @@ fi
 ROOTLESS_RUN_ARGS=()
 if [ -n "$ROOTLESS_USERNS" ]; then
   ROOTLESS_RUN_ARGS=("$ROOTLESS_USERNS" --user 0)
+  # Podman's keep-id consults $USER (not just getuid) when it builds the
+  # in-container passwd entry and the userns id-mapping. A stale, empty, or
+  # deliberately wrong $USER - e.g. cron, `env -u USER`, or a caller that
+  # overrides it - makes podman emit a one-entry mapping (containerUID:host-uid
+  # -> 0) that omits UID 0, and `podman run --user 0` is then rejected with
+  # "container uses ID mappings ... but doesn't map UID 0". Normalize $USER to the
+  # real account name so keep-id maps the host UID 1:1. The container user is
+  # still derived independently from `id -un` below, so this does not change the
+  # mapping run-dockerfile applies - it only keeps the engine's own keep-id sane.
+  # (Diagnosed in CI: rootless podman cannot run in the local LXC sandbox.)
+  USER="$(id -un)"
+  export USER
 fi
 
 # RUN_DOCKERFILE_PRINT_ENGINE=1 is a diagnostic: print the resolved engine and
