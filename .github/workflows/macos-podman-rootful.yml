@@ -1,0 +1,18 @@
+name: macOS · Podman (rootful)
+
+# Same podman-machine VM as the rootless cell, but targeting its rootful
+# connection (podman-machine-default-root) rather than the default rootless one,
+# passed verbatim as the engine. One VM serves both connections.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  cell:
+    uses: ./.github/workflows/cell.yml
+    with:
+      runner-json: '["self-hosted","macOS","ARM64"]'
+      engine: 'podman --connection podman-machine-default-root'
+      cell-caps: 'qemu-arm64'
+      setup-podman-machine: true

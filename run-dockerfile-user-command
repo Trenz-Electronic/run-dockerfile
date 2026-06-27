@@ -177,9 +177,12 @@ else
 fi
 
 # Ensure home directory is owned by the user (Docker may have created it as root
-# when setting up mount points for subdirectories)
+# when setting up mount points for subdirectories). Best-effort: some bind-mount
+# file-sharing layers (notably macOS Podman's virtiofs) forbid chowning a host
+# share and return EPERM, but already present its files as the mapped UID, so a
+# failure there is non-fatal.
 mkdir -p "$HOME"
-chown "$USERID:$GROUPID" "$HOME"
+chown "$USERID:$GROUPID" "$HOME" 2>/dev/null || true
 
 # Extract #copy.home: files if provided
 if [ -f /tmp/home-files.tar.gz ]; then

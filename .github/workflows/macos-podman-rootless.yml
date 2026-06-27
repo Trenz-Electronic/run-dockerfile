@@ -1,0 +1,19 @@
+name: macOS · Podman (rootless)
+
+# Self-hosted macOS runner; Podman runs in a VM ("podman machine"). The default
+# connection is rootless (Security.Rootless=true). The VM's virtiofs handles
+# host<->VM file ownership, so no keep-id is needed here. Caps stay conservative;
+# expand once a run shows them green.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  cell:
+    uses: ./.github/workflows/cell.yml
+    with:
+      runner-json: '["self-hosted","macOS","ARM64"]'
+      engine: podman
+      cell-caps: 'qemu-arm64'
+      setup-podman-machine: true
