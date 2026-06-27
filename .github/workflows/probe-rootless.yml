@@ -1,17 +1,19 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v7: the bake+run are now
-# proven identical between my replication (passes) and the real run (fails); the
-# ONLY remaining difference is the BASE image build. Build the base two ways -
-# (A) exactly as build-and-run does (context = the test dir with its `run` symlink
-# + --label), (B) from a clean /tmp context - bake+run each identically and see
-# which reproduces the idmap rejection.
+# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v8: the exact commands
+# pass when I issue them but fail via tests/run -> build-and-run. Difference must
+# be the ENVIRONMENT podman inherits. Wrap podman to dump its env (sorted) on the
+# `run` call in BOTH the failing (tests/run) and passing (manual) cases, then diff.
 on:
   workflow_dispatch:
 
 jobs:
   probe:
     runs-on: ubuntu-latest
+    env:
+      RUN_DOCKERFILE_ENGINE: podman
+      RUN_DOCKERFILE_USERNS: keep-id
+      RUN_DOCKERFILE_CELL_CAPS: 'cgroups gnu-stat python3 linux rootless-podman'
     steps:
     - uses: actions/checkout@v6
     - name: Configure Podman registries (rootless)
@@ -19,41 +21,35 @@ jobs:
         printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
-    - name: Probe
+    - name: Wrap podman, capture env on run
       run: |
         set +e
-        export DOCKER_BUILDKIT=1
+        REAL=$(command -v podman)
+        WRAP="$HOME/wrapbin"; mkdir -p "$WRAP"
+        cat > "$WRAP/podman" <<EOF
+        #!/usr/bin/env bash
+        if [ "\$1" = run ]; then env | sort > "/tmp/penv-\${PROBE_MARKER:-x}.txt"; fi
+        exec "$REAL" "\$@"
+        EOF
+        chmod +x "$WRAP/podman"
+        export PATH="$WRAP:$PATH"
+
+        echo "##### CASE FAIL: tests/run 0036 #####"
+        PROBE_MARKER=fail tests/run 0036
+        echo "fail-rc=$?"
+
+        echo "##### CASE PASS: manual replication #####"
         REPO="$PWD"; ARCH=$(podman info --format '{{.Host.Arch}}')
-
-        bake_and_run() { # base_tag, label
-          local base="$1"
-          local ucctx; ucctx=$(mktemp -d)
-          cp run-dockerfile-user-command "$ucctx/"
-          { printf 'FROM %s\n' "$base"; printf 'COPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n'; } > "$ucctx/Dockerfile"
-          podman build -t "$base.uc" --platform=linux/$ARCH --label run-dockerfile.user-command-hash=h "$ucctx" >/dev/null 2>&1
-          echo "+ run $base.uc"
-          podman run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO/tests/0036_unset_user_env" \
-            --entrypoint /bin/sh --platform linux/$ARCH "$base.uc" \
-            /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un 2>&1 | tail -3
-          echo "rc=${PIPESTATUS[0]}"
-          rm -rf "$ucctx"
-        }
-
-        echo "===== A: base built EXACTLY as build-and-run (testdir context + --label) ====="
-        podman build -t b_testdir --label run-dockerfile.context-hash=e2cafe53761a07969558a2565a16cb27db8545e0799ce5b75d0e1212256bf2ef tests/0036_unset_user_env >/dev/null 2>&1
-        echo "base-build-rc=$?"
-        bake_and_run b_testdir
+        podman build -t m_base tests/0036_unset_user_env >/dev/null 2>&1
+        uc=$(mktemp -d); cp run-dockerfile-user-command "$uc/"
+        printf 'FROM m_base\nCOPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n' > "$uc/Dockerfile"
+        podman build -t m_base.uc --platform=linux/$ARCH "$uc" >/dev/null 2>&1
+        PROBE_MARKER=pass podman run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" \
+          -w "$REPO/tests/0036_unset_user_env" --entrypoint /bin/sh --platform linux/$ARCH m_base.uc \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
+        echo "pass-rc=$?"
 
         echo
-        echo "===== B: base built from clean /tmp context, no label ====="
-        printf 'FROM alpine:latest\n' > /tmp/Dockerfile.base
-        podman build -t b_tmp -f /tmp/Dockerfile.base /tmp >/dev/null 2>&1
-        echo "base-build-rc=$?"
-        bake_and_run b_tmp
-
-        echo
-        echo "===== C: base from testdir but NO label ====="
-        podman build -t b_testdir_nolabel tests/0036_unset_user_env >/dev/null 2>&1
-        bake_and_run b_testdir_nolabel
-
-        echo; echo "===== done ====="
+        echo "########## ENV DIFF (fail vs pass) ##########"
+        echo "--- only in FAIL env ---"; comm -23 /tmp/penv-fail.txt /tmp/penv-pass.txt
+        echo "--- only in PASS env ---"; comm -13 /tmp/penv-fail.txt /tmp/penv-pass.txt
