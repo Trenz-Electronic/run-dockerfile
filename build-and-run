@@ -1476,6 +1476,15 @@ DOCKER_RUN_CMD=("${ENGINE[@]}" run --rm -i "${TFLAG[@]}" \
   "$run_tag" \
   /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" "$@")
 
+# Under verbose mode, print the fully assembled run command (each argument quoted
+# with %q so spaces/specials are unambiguous) before executing it - useful for
+# diagnosing engine-level rejections (e.g. rootless userns/idmap errors).
+if [ "$RUN_DOCKERFILE_VERBOSE" = 1 ]; then
+  >&2 printf 'run-dockerfile: exec:'
+  >&2 printf ' %q' "${DOCKER_RUN_CMD[@]}"
+  >&2 printf '\n'
+fi
+
 # All accumulated docker arguments are bash arrays expanded as "${arr[@]}", and
 # every path/value is quoted, so spaces and glob characters are passed verbatim.
 # "$@" (not $*) preserves the user command's argument boundaries. When a

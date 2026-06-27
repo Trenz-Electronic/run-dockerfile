@@ -1,46 +1,50 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v3: determine whether the
-# 4 rootless failures (0019/0021/0029/0036) are STATEFUL (only fail after earlier
-# tests accumulate podman storage state) or INTRINSIC (fail in isolation on fresh
-# storage). Runs them isolated first, then again after building up state.
+# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v4: confirm that the
+# run-time `--platform linux/<native>` flag is what trips podman 4.9.3's
+# keep-id + --user 0 idmap rejection (build-and-run adds it for the native arch
+# even with no #platform directive). Reproduce WITH it, show the fix WITHOUT it.
 on:
   workflow_dispatch:
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    env:
-      RUN_DOCKERFILE_ENGINE: podman
-      RUN_DOCKERFILE_USERNS: keep-id
-      RUN_DOCKERFILE_CELL_CAPS: 'cgroups gnu-stat python3 linux rootless-podman'
     steps:
     - uses: actions/checkout@v6
-
     - name: Configure Podman registries (rootless)
       run: |
-        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
-
-    - name: ISOLATED - run only the 4 failing tests on fresh storage
+    - name: Probe
       run: |
         set +e
-        echo "##### Running 0019 0021 0029 0036 in ISOLATION (fresh storage) #####"
-        tests/run 0019 0021 0029 0036
-        echo "isolated-rc=$?"
+        REPO="$PWD"
+        printf 'FROM alpine:latest\n' > /tmp/Dockerfile.base
+        podman build -t probe-base -f /tmp/Dockerfile.base /tmp >/dev/null 2>&1
+        mkdir -p /tmp/bakectx; cp run-dockerfile-user-command /tmp/bakectx/
+        printf 'FROM probe-base\nCOPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n' > /tmp/bakectx/Dockerfile
+        podman build -t probe.uc /tmp/bakectx >/dev/null 2>&1
+        ARCH=$(podman info --format '{{.Host.Arch}}')
+        echo "host arch=$ARCH"
+        run() { local label="$1"; shift; echo; echo "===== $label ====="; echo "+ podman $*"; podman "$@" 2>&1 | tail -3; echo "rc=${PIPESTATUS[0]}"; }
 
-    - name: Storage state after isolation
-      run: |
-        podman images | head -30
-        echo "--- containers ---"; podman ps -a | head
+        # 1. REPRODUCE: exactly build-and-run's shape, WITH --platform
+        run "1 keepid user0 WITH --platform linux/$ARCH (expect FAIL)" \
+          run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO/tests" \
+          --entrypoint /bin/sh --platform "linux/$ARCH" probe.uc \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
 
-    - name: AFTER-STATE - build up state then retry the alpine one (0036)
-      run: |
-        set +e
-        echo "##### Running a chunk of earlier tests to accumulate state #####"
-        tests/run 0005 0006 0007 0015 0016 0017 0018 0020 0026 0035
-        echo "chunk-rc=$?"
-        echo "##### Now retry 0036 (alpine) AFTER accumulated state #####"
-        tests/run 0036
-        echo "retry0036-rc=$?"
+        # 2. THE FIX: identical but WITHOUT --platform (expect PASS)
+        run "2 keepid user0 NO --platform (expect PASS)" \
+          run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO/tests" \
+          --entrypoint /bin/sh probe.uc \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
+
+        # 3. Cross-check: WITH --platform but run as host uid instead of --user 0
+        run "3 keepid user=hostuid WITH --platform" \
+          run --rm -i --userns=keep-id --user "$(id -u):$(id -g)" -v "$REPO:$REPO" -w "$REPO/tests" \
+          --entrypoint /bin/sh --platform "linux/$ARCH" probe.uc \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
+
+        echo; echo "===== done ====="
