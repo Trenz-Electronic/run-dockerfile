@@ -18,6 +18,10 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$td"
+# Resolve /tmp to its real path (macOS Podman shares /private/tmp into its VM but
+# not the /tmp symlink, so a literal /tmp mount source fails there). pwd -P keeps
+# the embedded space and is a no-op on Linux.
+td=$(cd "$td" && pwd -P)
 echo "space_marker_$$" > "$td/marker"
 
 # Bind-mount the spaced host path (same path inside the container) and read it back.

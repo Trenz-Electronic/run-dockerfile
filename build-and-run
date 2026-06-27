@@ -1259,7 +1259,13 @@ cleanup_copy_home() {
 COPY_HOME_VARG=()
 COPY_HOME_TAR=""
 if [ ${#COPY_HOME_FILES[@]} -gt 0 ]; then
-  COPY_HOME_TAR="/tmp/run-dockerfile-home-files-$$.tar.gz"
+  # Place the bind-mounted archive in the *real* temp dir. macOS Podman shares
+  # the host's /private/tmp into its VM but not the /tmp symlink that points at
+  # it, so a literal "/tmp/..." mount source fails inside the VM with
+  # "statfs ...: no such file or directory". Resolving /tmp with `pwd -P` yields
+  # /private/tmp on macOS (a shared path) and stays /tmp on Linux (a no-op).
+  _tmp_real=$(cd /tmp 2>/dev/null && pwd -P) || _tmp_real="/tmp"
+  COPY_HOME_TAR="$_tmp_real/run-dockerfile-home-files-$$.tar.gz"
   trap cleanup_copy_home EXIT INT TERM
   cd "$HOME"
 

@@ -18,6 +18,10 @@ EOF
 trap cleanup EXIT INT TERM
 
 mkdir -p "$mount_dir"
+# Resolve /tmp to its real path (macOS Podman shares /private/tmp into its VM but
+# not the /tmp symlink, so a literal /tmp mount source fails there). pwd -P keeps
+# the embedded space and is a no-op on Linux.
+mount_dir=$(cd "$mount_dir" && pwd -P)
 echo "mounted through #option $$" > "$mount_dir/marker"
 
 cat > Dockerfile <<EOF
