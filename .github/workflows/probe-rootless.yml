@@ -1,76 +1,46 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v2: replicate the exact
-# build-and-run flow (build base, then bake the entry script into a derived image
-# with COPY --chmod=0755) and run THAT image under keep-id, to reproduce the
-# "doesn't map UID 0" rejection and validate the fix. Delete once settled.
+# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v3: determine whether the
+# 4 rootless failures (0019/0021/0029/0036) are STATEFUL (only fail after earlier
+# tests accumulate podman storage state) or INTRINSIC (fail in isolation on fresh
+# storage). Runs them isolated first, then again after building up state.
 on:
   workflow_dispatch:
 
 jobs:
   probe:
     runs-on: ubuntu-latest
+    env:
+      RUN_DOCKERFILE_ENGINE: podman
+      RUN_DOCKERFILE_USERNS: keep-id
+      RUN_DOCKERFILE_CELL_CAPS: 'cgroups gnu-stat python3 linux rootless-podman'
     steps:
     - uses: actions/checkout@v6
 
     - name: Configure Podman registries (rootless)
       run: |
+        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
 
-    - name: Probe
+    - name: ISOLATED - run only the 4 failing tests on fresh storage
       run: |
         set +e
-        export DOCKER_BUILDKIT=1
-        echo "### podman version"; podman version | sed -n '1,4p'
-        REPO="$PWD"
+        echo "##### Running 0019 0021 0029 0036 in ISOLATION (fresh storage) #####"
+        tests/run 0019 0021 0029 0036
+        echo "isolated-rc=$?"
 
-        # Build base + bake derived image exactly like build-and-run does.
-        echo "### build base FROM alpine"
-        printf 'FROM alpine:latest\n' > /tmp/Dockerfile.base
-        podman build -t probe-base -f /tmp/Dockerfile.base /tmp 2>&1 | tail -2
-        echo "### bake derived (COPY --chmod=0755 run-dockerfile-user-command)"
-        mkdir -p /tmp/bakectx
-        cp run-dockerfile-user-command /tmp/bakectx/
-        printf 'FROM probe-base\nCOPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n' > /tmp/bakectx/Dockerfile
-        podman build -t probe-base.user-command /tmp/bakectx 2>&1 | tail -2
+    - name: Storage state after isolation
+      run: |
+        podman images | head -30
+        echo "--- containers ---"; podman ps -a | head
 
-        run() { local label="$1"; shift; echo; echo "===== $label ====="; echo "+ podman $*"; podman "$@" 2>&1 | tail -5; echo "rc=${PIPESTATUS[0]}"; }
-
-        # 1. Reproduce: baked image, keep-id, --user 0, repo mount (0036 exact shape)
-        run "1 BAKED keepid user0 repo-mount" run --rm --userns=keep-id --user 0 \
-          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
-
-        # 2. Plain alpine, same args (control — expect OK, proving it's the baked image)
-        run "2 PLAIN alpine keepid user0 repo-mount" run --rm --userns=keep-id --user 0 \
-          -v "$REPO:$REPO" -w "$REPO" alpine id
-
-        # 3. Inspect what idmap the baked image's layers carry
-        echo; echo "===== 3 baked image inspect ====="
-        podman image inspect probe-base.user-command --format '{{.GraphDriver.Name}} {{json .RootFS}}' 2>&1 | head -2
-
-        # 4. FIX candidate A: run baked image as host uid (keep-id maps 1:1), no --user 0
-        run "4 BAKED keepid user=hostuid repo-mount" run --rm --userns=keep-id --user "$(id -u):$(id -g)" \
-          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
-
-        # 5. FIX candidate B: bake WITHOUT --chmod (plain COPY, then chmod in a RUN)
-        printf 'FROM probe-base\nCOPY run-dockerfile-user-command /bin/run-dockerfile-user-command\nRUN chmod 0755 /bin/run-dockerfile-user-command\n' > /tmp/bakectx/Dockerfile
-        podman build -t probe-base.uc2 /tmp/bakectx 2>&1 | tail -1
-        run "5 BAKED(no --chmod) keepid user0 repo-mount" run --rm --userns=keep-id --user 0 \
-          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.uc2 \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
-
-        # 6. FIX candidate C: keep --user 0 but add --userns=keep-id:uid=0,gid=0 (map UID 0 too)
-        run "6 BAKED keepid:uid0 user0 repo-mount" run --rm --userns=keep-id:uid=0,gid=0 --user 0 \
-          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
-
-        # 7. FIX candidate D: --user 0 + copy.home tarball, baked image (0019 shape)
-        echo hello > /tmp/probe-file.txt; tar czf /tmp/probe-home.tar.gz -C /tmp probe-file.txt
-        run "7 BAKED keepid user0 repo + tarball" run --rm --userns=keep-id --user 0 \
-          -v "$REPO:$REPO" -v /tmp/probe-home.tar.gz:/tmp/home-files.tar.gz -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
-
-        echo; echo "===== done ====="
+    - name: AFTER-STATE - build up state then retry the alpine one (0036)
+      run: |
+        set +e
+        echo "##### Running a chunk of earlier tests to accumulate state #####"
+        tests/run 0005 0006 0007 0015 0016 0017 0018 0020 0026 0035
+        echo "chunk-rc=$?"
+        echo "##### Now retry 0036 (alpine) AFTER accumulated state #####"
+        tests/run 0036
+        echo "retry0036-rc=$?"
