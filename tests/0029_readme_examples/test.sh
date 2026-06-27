@@ -465,15 +465,24 @@ fi
 
 echo ""
 echo "=== Run non-interactive installer (expect) README sample ==="
-case "$ENGINE" in
-*podman*)
-    # The installer-01-expect sample uses a Dockerfile here-document
-    # (COPY <<'EOF'), a Docker/BuildKit feature. Podman/Buildah (through at
-    # least 4.9.3 / Buildah 1.33) does not parse COPY heredocs, so this sample
-    # only builds under Docker; the Docker job covers it.
-    echo "SKIP: non-interactive installer (expect) README sample (COPY heredoc needs Docker/BuildKit; Podman/Buildah lacks it)"
-    ;;
-*)
+# The installer-01-expect sample uses a Dockerfile here-document (COPY <<'EOF').
+# Docker/BuildKit always parses these, and upstream Buildah has since v1.33.0 - but
+# some distro Buildah packages (notably Debian/Ubuntu, where it was stripped to drop a
+# BuildKit dependency and only restored in buildah 1.35.3+ds1-2) ship without it. Probe
+# THIS engine with a throwaway COPY-heredoc build: run the sample where it works, skip
+# (with the real reason) where the build has here-documents stripped.
+heredoc_probe=$(mktemp -d)
+printf 'FROM alpine:latest\nCOPY <<HDOC /probe.txt\nok\nHDOC\n' > "$heredoc_probe/Dockerfile"
+if $ENGINE build -t "rdf-heredoc-probe-$$" "$heredoc_probe" >/dev/null 2>&1; then
+    $ENGINE rmi -f "rdf-heredoc-probe-$$" >/dev/null 2>&1
+    heredoc_ok=1
+else
+    heredoc_ok=0
+fi
+rm -rf "$heredoc_probe"
+if [ "$heredoc_ok" -ne 1 ]; then
+    echo "SKIP: non-interactive installer (expect) README sample (this engine's Buildah build has Dockerfile here-documents stripped; supported upstream since Buildah 1.33.0)"
+else
 # Build a stand-in for an interactive vendor installer. Its prompt strings must
 # stay in sync with the expect sample in README.md (installer-01-expect); if they
 # drift, the expect script times out and this test fails (which is the point).
@@ -511,8 +520,7 @@ else
     echo "FAIL: non-interactive installer (expect) README sample produced unexpected output: '$output'"
     fail=1
 fi
-    ;;
-esac
+fi
 
 echo ""
 echo "=== Dockerfile directive samples use the #run-dockerfile: prefix ==="
