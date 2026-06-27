@@ -565,7 +565,36 @@ When using `#run-dockerfile: http.static`, run-dockerfile briefly starts a tempo
 
 ## Testing
 
-Run `tests/run --all` to execute the test suite. See `CLAUDE.md` for maintainer notes.
+The test suite lives in `tests/`, one directory per case. Run it with `tests/run`:
+
+- `tests/run --all` — run the whole suite.
+- `tests/run 0017` — run a single test. The argument matches a test **directory by name prefix** (so `0017` selects `0017_auto_rebuild`), and must match exactly one directory.
+- `tests/run 0001 0003` — run several, each given as a prefix.
+- `tests/run --no-cleanup --all` — run everything but keep the test containers/images afterwards for debugging.
+- `tests/run --cleanup` — remove leftover test containers/images without running any test.
+
+### What runs in which CI cell
+
+The six status badges at the top of this README are CI **cells** — {Linux, macOS} × {Docker, Podman rootful, Podman rootless} — each running `tests/run --all`. A handful of tests need a capability a given cell can't provide, so they are skipped there (always reported, never silent). Each test declares what it needs with a `# caps:` line, and each cell declares what it provides.
+
+Capability → the test(s) it gates:
+
+- `qemu-arm64` → 0002, `qemu-amd64` → 0003, `qemu-armv7` → 0004 — running a foreign-architecture `#run-dockerfile: platform` image
+- `cgroups` → 0011, 0014 — container resource limits are observable
+- `python3` → 0008, 0029, 0030 — host HTTP server for `#run-dockerfile: http.static`
+- `linux` → 0010 — host-side Linux behavior (e.g. `/dev/pts`)
+- `rootless-podman` → 0046 — bare rootless Podman with `--userns=keep-id`
+- `home-bind` → 0006 — a bind-mounted private (mode-700) `$HOME` is readable by the in-container user
+
+Each cell skips the tests whose capability it does not provide:
+
+- **Linux · Docker** and **Linux · Podman (rootful)** → 0046
+- **Linux · Podman (rootless)** → 0002, 0003, 0004
+- **macOS · Docker** → 0010, 0011, 0014, 0046
+- **macOS · Podman (rootful)** → 0003, 0004, 0008, 0010, 0011, 0014, 0029, 0030, 0046
+- **macOS · Podman (rootless)** → the same as rootful, **plus** 0006
+
+These lists are derived from each test's `# caps:` line and each cell's `cell-caps` (in `.github/workflows/*.yml`); see the "Capability tags and the engine/OS support matrix" section of `CLAUDE.md` for the mechanism and maintainer notes.
 
 ## License
 
