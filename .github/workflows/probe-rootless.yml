@@ -1,9 +1,8 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY (workflow_dispatch). v11: 0036 fixed; 0019/0021/0029 still fail
-# (ubuntu/debian base + copy.home/usermount) and dash set -e hides the error.
-# Reproduce 0019 Test 2 and a usermount case directly with the REAL (fixed)
-# build-and-run, capturing full stderr + the wrapped podman commands.
+# DIAGNOSTIC-ONLY (workflow_dispatch). v12: copy.home under rootless keep-id puts
+# files in the arg-HOME (/home/runner) but `~` resolves to the workdir. Dump HOME,
+# the runner passwd entry, and where files actually landed to pinpoint the fix.
 on:
   workflow_dispatch:
 
@@ -13,64 +12,31 @@ jobs:
     env:
       RUN_DOCKERFILE_ENGINE: podman
       RUN_DOCKERFILE_USERNS: keep-id
-      RUN_DOCKERFILE_VERBOSE: '1'
     steps:
     - uses: actions/checkout@v6
     - name: Configure Podman registries (rootless)
       run: |
-        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
-    - name: Reproduce copy.home (ubuntu) and usermount directly
+    - name: Diagnose copy.home HOME resolution
       run: |
         set +e
         REPO="$PWD"
+        echo "host HOME=$HOME"
         echo "test license content" > "$HOME/.test-license-0019.dat"
-        mkdir -p "$HOME/.config/test-tool-0019"; echo "test config" > "$HOME/.config/test-tool-0019/config.json"
-
-        echo "########## A: copy.home multiple, FROM ubuntu:22.04 ##########"
-        A=/tmp/probe-a-cphome; rm -rf "$A"; mkdir -p "$A"; cd "$A"
-        cat > Dockerfile <<'EOF'
-        #copy.home: .test-license-0019.dat
-        #copy.home: .config/test-tool-0019/config.json
-        FROM ubuntu:22.04
-        EOF
-        ln -sf "$REPO/build-and-run" run
-        ./run sh -c 'cat ~/.test-license-0019.dat && cat ~/.config/test-tool-0019/config.json'
-        echo "A-rc=$?"
-        cd "$REPO"
-
-        echo
-        echo "########## B: copy.home single, FROM ubuntu:22.04 (isolate base vs count) ##########"
-        B=/tmp/probe-b-cphome; rm -rf "$B"; mkdir -p "$B"; cd "$B"
-        cat > Dockerfile <<'EOF'
-        #copy.home: .test-license-0019.dat
-        FROM ubuntu:22.04
-        EOF
-        ln -sf "$REPO/build-and-run" run
-        ./run sh -c 'cat ~/.test-license-0019.dat'
-        echo "B-rc=$?"
-        cd "$REPO"
-
-        echo
-        echo "########## C: usermount, FROM ubuntu:22.04 ##########"
-        C=/tmp/probe-c-usermount; rm -rf "$C"; mkdir -p "$C"; cd "$C"
-        cat > Dockerfile <<'EOF'
-        #usermount: /tmp/probe-um-0021
-        FROM ubuntu:22.04
-        EOF
-        ln -sf "$REPO/build-and-run" run
-        ./run sh -c 'ls -ld /tmp/probe-um-0021 && id'
-        echo "C-rc=$?"
-        cd "$REPO"
-
-        echo
-        echo "########## D: copy.home single FROM alpine (control, expect PASS) ##########"
-        D=/tmp/probe-d-alpine; rm -rf "$D"; mkdir -p "$D"; cd "$D"
+        D=/tmp/probe-cphome; rm -rf "$D"; mkdir -p "$D"; cd "$D"
         cat > Dockerfile <<'EOF'
         #copy.home: .test-license-0019.dat
         FROM alpine:latest
         EOF
         ln -sf "$REPO/build-and-run" run
-        ./run sh -c 'cat ~/.test-license-0019.dat'
-        echo "D-rc=$?"
+        ./run sh -c '
+          echo "container HOME=$HOME";
+          echo "--- whoami/id ---"; id;
+          echo "--- passwd runner ---"; grep "^runner:" /etc/passwd || echo "(no runner entry)";
+          echo "--- passwd uid 1001 ---"; awk -F: "\$3==1001" /etc/passwd || true;
+          echo "--- ls /home/runner ---"; ls -la /home/runner 2>&1;
+          echo "--- ls -a workdir ($PWD) ---"; ls -la . 2>&1;
+          echo "--- find license ---"; find / -name ".test-license-0019.dat" 2>/dev/null;
+        '
+        echo "rc=$?"
