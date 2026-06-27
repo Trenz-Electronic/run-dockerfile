@@ -1133,6 +1133,23 @@ EOF
     if [ -n "$CONTEXT_HASH" ]; then
       BUILD_CMD+=(--label "run-dockerfile.context-hash=${CONTEXT_HASH}")
     fi
+
+    # macOS + Podman: read the Dockerfile from stdin (`-f -`) instead of letting
+    # podman stat it inside the build context. The macOS `podman machine` VM serves
+    # the build context over a virtiofs share, and an atomic rename-replace of the
+    # Dockerfile on the host - what editors do on save (vim, VSCode, ...), and what
+    # this tool's own tests do to restore a Dockerfile - leaves the VM's cached
+    # dentry for "Dockerfile" stale for a few seconds. A normal `podman build <ctx>`
+    # then fails with `stat <ctx>/Dockerfile: no such file or directory` even though
+    # the file is present on the host. Feeding the Dockerfile over stdin sidesteps
+    # that one stale entry; the rest of the context (COPY/ADD sources) still comes
+    # from the share and is read fresh. Scoped to macOS+Podman so Linux and Docker -
+    # which read the context directly, with no VM and no such cache - are unaffected.
+    BUILD_DOCKERFILE_VIA_STDIN=0
+    if [ "$ENGINE_KIND" = podman ] && [ "$(uname -s)" = Darwin ]; then
+      BUILD_DOCKERFILE_VIA_STDIN=1
+      BUILD_CMD+=(-f -)
+    fi
     BUILD_CMD+=("$dir")
 
     >&2 echo "Running: ${BUILD_CMD[*]}"
@@ -1142,7 +1159,11 @@ EOF
     # Build output goes to stderr: Podman prints build progress and the image id
     # to stdout, which would otherwise contaminate `$(./run cmd)` output on a
     # build-triggering invocation. (Docker/BuildKit already writes to stderr.)
-    "${BUILD_CMD[@]}" >&2
+    if [ "$BUILD_DOCKERFILE_VIA_STDIN" = 1 ]; then
+      "${BUILD_CMD[@]}" >&2 < "$dir/Dockerfile"
+    else
+      "${BUILD_CMD[@]}" >&2
+    fi
     cleanup_http_servers
     trap - EXIT INT TERM
   else
