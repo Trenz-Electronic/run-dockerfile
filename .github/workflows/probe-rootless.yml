@@ -1,8 +1,9 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v9: validate the fix
-# (build-and-run now normalizes $USER for rootless keep-id) against all 4 failing
-# tests. If 0019/0021/0029 still fail, capture their real errors to diagnose.
+# DIAGNOSTIC-ONLY (workflow_dispatch). v10: 0036 fixed; 0019/0021/0029 still fail
+# (ubuntu/debian base + copy.home/usermount) and dash set -e hides the error.
+# Reproduce 0019 Test 2 and a usermount case directly with the REAL (fixed)
+# build-and-run, capturing full stderr + the wrapped podman commands.
 on:
   workflow_dispatch:
 
@@ -12,7 +13,7 @@ jobs:
     env:
       RUN_DOCKERFILE_ENGINE: podman
       RUN_DOCKERFILE_USERNS: keep-id
-      RUN_DOCKERFILE_CELL_CAPS: 'cgroups gnu-stat python3 linux rootless-podman'
+      RUN_DOCKERFILE_VERBOSE: '1'
     steps:
     - uses: actions/checkout@v6
     - name: Configure Podman registries (rootless)
@@ -20,8 +21,56 @@ jobs:
         printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
-    - name: Run the 4 previously-failing tests with the fix
+    - name: Reproduce copy.home (ubuntu) and usermount directly
       run: |
         set +e
-        tests/run 0019 0021 0029 0036
-        echo "rc=$?"
+        REPO="$PWD"
+        echo "test license content" > "$HOME/.test-license-0019.dat"
+        mkdir -p "$HOME/.config/test-tool-0019"; echo "test config" > "$HOME/.config/test-tool-0019/config.json"
+
+        echo "########## A: copy.home multiple, FROM ubuntu:22.04 ##########"
+        A=$(mktemp -d); cd "$A"
+        cat > Dockerfile <<'EOF'
+        #copy.home: .test-license-0019.dat
+        #copy.home: .config/test-tool-0019/config.json
+        FROM ubuntu:22.04
+        EOF
+        ln -sf "$REPO/build-and-run" run
+        ./run sh -c 'cat ~/.test-license-0019.dat && cat ~/.config/test-tool-0019/config.json'
+        echo "A-rc=$?"
+        cd "$REPO"
+
+        echo
+        echo "########## B: copy.home single, FROM ubuntu:22.04 (isolate base vs count) ##########"
+        B=$(mktemp -d); cd "$B"
+        cat > Dockerfile <<'EOF'
+        #copy.home: .test-license-0019.dat
+        FROM ubuntu:22.04
+        EOF
+        ln -sf "$REPO/build-and-run" run
+        ./run sh -c 'cat ~/.test-license-0019.dat'
+        echo "B-rc=$?"
+        cd "$REPO"
+
+        echo
+        echo "########## C: usermount, FROM ubuntu:22.04 ##########"
+        C=$(mktemp -d); cd "$C"
+        cat > Dockerfile <<'EOF'
+        #usermount: /tmp/probe-um-0021
+        FROM ubuntu:22.04
+        EOF
+        ln -sf "$REPO/build-and-run" run
+        ./run sh -c 'ls -ld /tmp/probe-um-0021 && id'
+        echo "C-rc=$?"
+        cd "$REPO"
+
+        echo
+        echo "########## D: copy.home single FROM alpine (control, expect PASS) ##########"
+        D=$(mktemp -d); cd "$D"
+        cat > Dockerfile <<'EOF'
+        #copy.home: .test-license-0019.dat
+        FROM alpine:latest
+        EOF
+        ln -sf "$REPO/build-and-run" run
+        ./run sh -c 'cat ~/.test-license-0019.dat'
+        echo "D-rc=$?"
