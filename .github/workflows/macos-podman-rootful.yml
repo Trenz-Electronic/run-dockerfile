@@ -8,6 +8,12 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  # A newer push supersedes an older queued/in-progress run of this same
+  # cell, so rapid pushes do not pile up on the single self-hosted runner.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   cell:
     uses: ./.github/workflows/cell.yml
