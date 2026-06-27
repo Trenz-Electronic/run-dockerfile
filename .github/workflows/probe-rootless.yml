@@ -1,0 +1,71 @@
+name: probe · rootless idmap
+
+# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). Runs a battery of raw
+# rootless `podman run` variants to pinpoint which mount/flag combination triggers
+# the "container uses ID mappings ... but doesn't map UID 0" rejection under
+# --userns=keep-id --user 0, and which alternative clears it. Delete once the
+# rootless run-path fix is settled.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Configure Podman registries (rootless)
+      run: |
+        mkdir -p "$HOME/.config/containers"
+        printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
+
+    - name: Probe
+      run: |
+        set +e
+        echo "### podman version"; podman version | sed -n '1,6p'
+        echo "### whoami / id"; id
+        echo "### default uid_map"; podman unshare cat /proc/self/uid_map
+        echo "### keep-id uid_map"; podman run --rm --userns=keep-id alpine cat /proc/self/uid_map 2>&1 | head -5
+
+        REPO="$PWD"
+        echo "### REPO=$REPO owner:"; stat -c '%u:%g %n' "$REPO"
+        TAR=/tmp/probe-home.tar.gz
+        echo hello > /tmp/probe-file.txt
+        tar czf "$TAR" -C /tmp probe-file.txt
+        echo "### TAR owner:"; stat -c '%u:%g %n' "$TAR"
+        UM=/tmp/probe-usermount
+        mkdir -p "$UM"
+        echo "### UM owner:"; stat -c '%u:%g %n' "$UM"
+
+        run() { # label, then podman args
+          local label="$1"; shift
+          echo
+          echo "===== $label ====="
+          echo "+ podman $*"
+          podman "$@" 2>&1 | tail -4
+          echo "rc=${PIPESTATUS[0]}"
+        }
+
+        # A: 0036-like — keep-id + --user 0 + repo (.git default) mount only
+        run "A repo-mount keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO" alpine id
+        # B: 0019-like — add the /tmp copy.home tarball bind mount
+        run "B repo + /tmp tarball, keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz" alpine id
+        # C: tarball mount ALONE (isolate the /tmp bind mount as the trigger)
+        run "C /tmp tarball only, keepid user0" run --rm --userns=keep-id --user 0 -v "$TAR:/tmp/home-files.tar.gz" alpine id
+        # D: 0021-like — usermount dir bind mount
+        run "D usermount dir, keepid user0" run --rm --userns=keep-id --user 0 -v "$UM:$UM" alpine id
+        # E: same repo mount but NO --user (image default root)
+        run "E repo-mount keepid no --user" run --rm --userns=keep-id -v "$REPO:$REPO" alpine id
+        # F: run as host uid instead of 0 (the redesign candidate)
+        run "F repo+tarball keepid user=hostuid" run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz" alpine id
+        # G: --user 0 + tarball mounted with :U (chown volume to container user)
+        run "G repo+tarball:U keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz:U" alpine id
+        # H: --user 0 + explicit :idmap on the tarball volume
+        run "H repo+tarball:idmap keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz:idmap" alpine id
+        # I: --user 0 + keep-id WITHOUT mounting the tarball into /tmp but into /home
+        run "I tarball into /root, keepid user0" run --rm --userns=keep-id --user 0 -v "$TAR:/root/home-files.tar.gz" alpine id
+        # J: control — no userns at all (rootless default), --user 0, tarball
+        run "J tarball, NO userns, user0" run --rm --user 0 -v "$TAR:/tmp/home-files.tar.gz" alpine id
+
+        echo
+        echo "===== done ====="
