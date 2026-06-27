@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: linux
 # Test: TTY present - tty detected when run with pseudo-terminal
 
 set -e

@@ -1,0 +1,20 @@
+name: macOS · Podman
+
+# Self-hosted macOS runner with Podman (a Linux VM via "podman machine"). Started
+# conservatively: only the native arm64 cap is provided. Cross-arch emulation in the
+# VM and host-reachable #http.static networking are unverified here, so qemu-amd64 /
+# qemu-armv7 / python3 are withheld (their tests pre-skip) until confirmed - add them
+# to cell-caps once a run shows them green.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  cell:
+    uses: ./.github/workflows/cell.yml
+    with:
+      runner-json: '["self-hosted","macOS","ARM64"]'
+      engine: podman
+      cell-caps: 'qemu-arm64'
+      setup-podman-machine: true

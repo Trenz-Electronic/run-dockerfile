@@ -1,0 +1,17 @@
+name: Linux · Docker
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  cell:
+    uses: ./.github/workflows/cell.yml
+    with:
+      runner-json: '"ubuntu-latest"'
+      engine: docker
+      cell-caps: 'qemu-amd64 qemu-arm64 qemu-armv7 cgroups gnu-stat python3 linux'
+      setup-qemu: true

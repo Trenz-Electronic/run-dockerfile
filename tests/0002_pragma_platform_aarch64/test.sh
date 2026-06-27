@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: qemu-arm64
 # Test: # platform: arm64 directive runs container on aarch64
 
 set -e

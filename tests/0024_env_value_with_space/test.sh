@@ -7,10 +7,12 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 cleanup() {
-    docker rmi -f 0024_env_value_with_space 2>/dev/null || true
+    $ENGINE rmi -f 0024_env_value_with_space 2>/dev/null || true
 }
 trap cleanup EXIT
 

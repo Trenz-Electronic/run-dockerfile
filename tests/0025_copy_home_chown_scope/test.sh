@@ -7,6 +7,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 SRC="$HOME/.copyhome-src-0025-$$"          # the file we ask #copy.home: to copy
@@ -16,7 +18,7 @@ DECOY="$HOME/$DECOY_NAME"
 cleanup() {
     rm -f "$SRC"
     rm -rf test_scope
-    docker rmi -f test_scope 2>/dev/null || true
+    $ENGINE rmi -f test_scope 2>/dev/null || true
 }
 trap cleanup EXIT
 

@@ -5,13 +5,15 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 td="/tmp/db booster 0022-$$"   # note the spaces
 
 cleanup() {
     rm -rf "$td"
-    docker rmi -f 0022_space_in_path 2>/dev/null || true
+    $ENGINE rmi -f 0022_space_in_path 2>/dev/null || true
 }
 trap cleanup EXIT
 

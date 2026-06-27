@@ -11,15 +11,56 @@ TEST_PATTERNS=""
 
 # Resolve the same container engine build-and-run will use, so teardown targets
 # the right image store (Docker and Podman keep separate stores). Mirrors
-# build-and-run's resolution: explicit RUN_DOCKERFILE_ENGINE wins, else
-# auto-detect with Podman preferred (rootful Podman => "sudo podman").
-if [ -n "${RUN_DOCKERFILE_ENGINE:-}" ]; then
+# build-and-run's resolution: a global rootless override (RUN_DOCKERFILE_USERNS)
+# forces bare "podman" (rootless store); else explicit RUN_DOCKERFILE_ENGINE wins;
+# else auto-detect with Podman preferred (rootful Podman => "sudo podman").
+if [ -n "${RUN_DOCKERFILE_USERNS:-}" ]; then
+    ENGINE="podman"
+elif [ -n "${RUN_DOCKERFILE_ENGINE:-}" ]; then
     ENGINE="$RUN_DOCKERFILE_ENGINE"
 elif command -v podman >/dev/null 2>&1; then
     ENGINE="sudo podman"
 else
     ENGINE="docker"
 fi
+
+# Capability gating (opt-in via RUN_DOCKERFILE_CELL_CAPS). Each test may declare a
+# "# caps: <tokens>" line; a CI cell sets RUN_DOCKERFILE_CELL_CAPS to the caps it
+# provides. When the var is set, a test runs iff its required caps are a subset of
+# the cell's; otherwise it is pre-skipped (reported). A test whose caps ARE
+# provided but that self-skips anyway (exit 77) is an UNEXPECTED SKIP and fails the
+# run - so a green run cannot hide a silently-skipped suite. Unset => run
+# everything and tolerate probe skips (local-dev behavior, unchanged).
+CELL_CAPS="${RUN_DOCKERFILE_CELL_CAPS:-}"
+if [ -n "${RUN_DOCKERFILE_CELL_CAPS+set}" ]; then CAPS_ENFORCED=1; else CAPS_ENFORCED=0; fi
+
+# Echo the space-separated capabilities a test requires (empty if it declares none).
+test_caps() {
+    sed -n 's/^# caps:[[:space:]]*//p' "$1/test.sh" 2>/dev/null | head -1
+}
+
+# True iff every required cap ($1) is present in the provided set ($2).
+caps_satisfied() {
+    for _req in $1; do
+        case " $2 " in
+            *" $_req "*) ;;
+            *) return 1 ;;
+        esac
+    done
+    return 0
+}
+
+# Echo the required caps ($1) missing from the provided set ($2), each space-prefixed.
+caps_missing() {
+    _m=""
+    for _req in $1; do
+        case " $2 " in
+            *" $_req "*) ;;
+            *) _m="$_m $_req" ;;
+        esac
+    done
+    printf '%s' "$_m"
+}
 
 # Parse arguments
 while [ $# -gt 0 ]; do
@@ -68,7 +109,10 @@ find_test_dir() {
 run_tests() {
     passed=0
     failed=0
+    skipped=0
+    unexpected=0
     failed_tests=""
+    unexpected_tests=""
 
     # Build list of test directories
     test_dirs=""
@@ -89,11 +133,36 @@ run_tests() {
 
     for dir in $test_dirs; do
         name=$(basename "$dir")
-        printf "Running %s... " "$name"
+        required=$(test_caps "$dir")
 
-        if (cd "$dir" && sh test.sh) </dev/null > /tmp/test-output-$$ 2>&1; then
+        # Pre-skip when the cell does not provide the test's required caps.
+        if [ "$CAPS_ENFORCED" = 1 ] && ! caps_satisfied "$required" "$CELL_CAPS"; then
+            printf "Running %s... SKIP (caps not provided:%s)\n" \
+                "$name" "$(caps_missing "$required" "$CELL_CAPS")"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        printf "Running %s... " "$name"
+        rc=0
+        (cd "$dir" && sh test.sh) </dev/null > /tmp/test-output-$$ 2>&1 || rc=$?
+
+        if [ "$rc" -eq 0 ]; then
             echo "PASS"
             passed=$((passed + 1))
+        elif [ "$rc" -eq 77 ]; then
+            reason=$(sed -n 's/^SKIP: //p' /tmp/test-output-$$ | head -1)
+            if [ "$CAPS_ENFORCED" = 1 ]; then
+                # Caps were satisfied, yet the test skipped: the cell claims this
+                # capability but cannot actually exercise it. Fail loudly.
+                echo "UNEXPECTED SKIP (${reason:-no reason given})"
+                unexpected=$((unexpected + 1))
+                unexpected_tests="$unexpected_tests $name"
+                cat /tmp/test-output-$$
+            else
+                echo "SKIP (${reason:-probe})"
+                skipped=$((skipped + 1))
+            fi
         else
             echo "FAIL"
             failed=$((failed + 1))
@@ -104,10 +173,15 @@ run_tests() {
     done
 
     echo ""
-    echo "Results: $passed passed, $failed failed"
+    echo "Results: $passed passed, $failed failed, $skipped skipped"
 
+    if [ "$unexpected" -gt 0 ]; then
+        echo "Unexpected skips (cell provides the caps but the test skipped):$unexpected_tests"
+    fi
     if [ -n "$failed_tests" ]; then
         echo "Failed:$failed_tests"
+    fi
+    if [ "$failed" -gt 0 ] || [ "$unexpected" -gt 0 ]; then
         return 1
     fi
 }

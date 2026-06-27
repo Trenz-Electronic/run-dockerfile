@@ -9,10 +9,12 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 # Clean up any existing images
-docker rmi -f test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing 2>/dev/null || true
+$ENGINE rmi -f test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing 2>/dev/null || true
 
 echo "=== Test 1: Without #sudo: directive, su works but sudo not configured ==="
 mkdir -p test_no_sudo
@@ -119,7 +121,7 @@ cd ..
 
 # Cleanup
 rm -rf test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing
-docker rmi -f test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing 2>/dev/null || true
+$ENGINE rmi -f test_no_sudo test_sudo_all test_sudo_fail test_sudo_missing test_sudoers_dir_missing 2>/dev/null || true
 
 if [ "$fail" = 0 ]; then
     echo ""

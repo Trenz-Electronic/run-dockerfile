@@ -1,9 +1,12 @@
 #!/bin/sh
+# caps: python3
 # Test: multiple #http.static: directives each serve their OWN directory.
 # Regression for the shared-port-file bug, where the second directive reused
 # the first server's port and its build-arg URL pointed at the wrong directory.
 
 set -e
+
+. ../lib/engine.sh
 
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 marker_a="content-a-$$"
@@ -19,7 +22,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Force a rebuild so the HTTP servers actually start.
-docker rmi -f 0030_http_static_multiple 2>/dev/null || true
+$ENGINE rmi -f 0030_http_static_multiple 2>/dev/null || true
 
 # With the bug, the BETA build-arg points at the ALPHA server and the build
 # fails fetching marker-b.txt; the build only succeeds when both servers map

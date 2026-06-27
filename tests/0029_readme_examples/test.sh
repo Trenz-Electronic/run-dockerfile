@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: python3
 # Test: README Quick Start examples stay executable and internally consistent.
 
 set -e

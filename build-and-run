@@ -606,6 +606,22 @@ while IFS= read -r _rl_line; do
   ROOTLESS_USERNS="$_rl_val"
 done < <(printf '%s\n' "$DIRECTIVE_STREAM" | grep -E '^#[[:space:]]*rootless:[[:space:]]*' || true)
 
+# Global rootless override: RUN_DOCKERFILE_USERNS forces rootless Podman with the
+# given --userns=<mode> across the whole run, without editing any Dockerfile - so a
+# CI cell (or a user) can exercise the entire suite rootless with correct bind-mount
+# ownership. A per-Dockerfile `#run-dockerfile: rootless` directive is more specific
+# and takes precedence; this env var is only a global default. Unset => unchanged.
+# It only seeds ROOTLESS_USERNS; resolve_engine then forces bare podman and validates
+# any RUN_DOCKERFILE_ENGINE selects podman, and ROOTLESS_RUN_ARGS injects the args.
+if [ -z "$ROOTLESS_USERNS" ] && [ -n "${RUN_DOCKERFILE_USERNS:-}" ]; then
+  _env_userns="--userns=${RUN_DOCKERFILE_USERNS}"
+  if [[ ! "$_env_userns" =~ ^--userns=[A-Za-z0-9:=,._-]+$ ]]; then
+    >&2 echo "ERROR: RUN_DOCKERFILE_USERNS='${RUN_DOCKERFILE_USERNS}' is not a valid userns mode (e.g. keep-id)."
+    exit 1
+  fi
+  ROOTLESS_USERNS="$_env_userns"
+fi
+
 # Resolve the container engine into the ENGINE array (always expanded as
 # "${ENGINE[@]}", so a multi-word engine such as "sudo podman" is passed
 # verbatim) plus ENGINE_KIND (docker|podman). An explicit RUN_DOCKERFILE_ENGINE

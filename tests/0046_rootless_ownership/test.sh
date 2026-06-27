@@ -1,20 +1,23 @@
 #!/bin/sh
+# caps: rootless-podman
 # Test: rootless Podman with `#run-dockerfile: rootless --userns=keep-id` maps the
 # in-container host-matching user to the host UID 1:1, so a file the user writes
 # into a bind-mounted directory is owned by the HOST UID on the host - not a
 # shifted subuid.
 #
-# This is the empirical "keep-id ownership" check. It requires a working rootless
-# Podman and is SKIPPED (reported PASS) where that is unavailable - e.g. inside an
-# unprivileged LXC container (no /dev/net/tun, nested-userns /proc mount denied),
-# or where podman is not installed. It runs for real on CI (ubuntu-latest).
+# This is the empirical "keep-id ownership" check. It declares the rootless-podman
+# capability, so it runs only in the rootless-Podman cell; tests/run pre-skips it
+# elsewhere. Where rootless Podman is installed but cannot actually start a keep-id
+# container (e.g. inside an unprivileged LXC container: no /dev/net/tun,
+# nested-userns /proc mount denied), it self-skips via skip() (exit 77).
 
 set -e
 
-skip() { echo "SKIP: $1"; exit 0; }
+. ../lib/skip.sh
+. ../lib/portable.sh
 
 command -v podman >/dev/null 2>&1 || skip "podman not installed"
-command -v stat   >/dev/null 2>&1 || skip "GNU stat not available"
+command -v stat   >/dev/null 2>&1 || skip "stat not available"
 
 # Probe: can rootless Podman actually start a keep-id container here?
 if ! podman run --rm --userns=keep-id alpine:latest true >/dev/null 2>&1; then
@@ -35,7 +38,7 @@ if ! env -u RUN_DOCKERFILE_ENGINE ./run sh -c 'touch /mnt/probe' >/dev/null 2>&1
     exit 1
 fi
 
-OWNER=$(stat -c '%u' "$OUT/probe" 2>/dev/null || echo "?")
+OWNER=$(stat_uid "$OUT/probe" 2>/dev/null || echo "?")
 if [ "$OWNER" = "$HOST_UID" ]; then
     echo "PASS: keep-id bind-mount file owned by host UID $HOST_UID"
     exit 0

@@ -1,0 +1,90 @@
+name: cell
+
+# Reusable workflow: run the whole test suite once for a single (OS, engine) cell.
+# A caller pins the engine via RUN_DOCKERFILE_ENGINE / RUN_DOCKERFILE_USERNS and
+# declares the capabilities the cell provides via RUN_DOCKERFILE_CELL_CAPS. tests/run
+# then pre-skips tests the cell cannot support (reported) and FAILS the run if a test
+# whose caps ARE provided nonetheless self-skips - so a green cell cannot hide a
+# silently-skipped suite. Each caller is its own workflow file, hence its own badge.
+
+on:
+  workflow_call:
+    inputs:
+      runner-json:
+        description: 'runs-on as JSON ("ubuntu-latest" or ["self-hosted","macOS","ARM64"])'
+        required: true
+        type: string
+      engine:
+        description: 'RUN_DOCKERFILE_ENGINE (docker | sudo podman | podman); empty = auto-detect'
+        type: string
+        default: ''
+      userns:
+        description: 'RUN_DOCKERFILE_USERNS (e.g. keep-id) to force global rootless Podman'
+        type: string
+        default: ''
+      cell-caps:
+        description: 'Capabilities this cell provides (space-separated)'
+        type: string
+        default: ''
+      setup-qemu:
+        description: 'Register binfmt/QEMU host-wide for foreign-arch builds'
+        type: boolean
+        default: false
+      setup-podman:
+        description: 'Configure Podman unqualified-search registries (Linux)'
+        type: boolean
+        default: false
+      setup-podman-machine:
+        description: 'Ensure a Podman machine is running (macOS)'
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ${{ fromJSON(inputs.runner-json) }}
+    env:
+      RUN_DOCKERFILE_ENGINE: ${{ inputs.engine }}
+      RUN_DOCKERFILE_USERNS: ${{ inputs.userns }}
+      RUN_DOCKERFILE_CELL_CAPS: ${{ inputs.cell-caps }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Set up QEMU (foreign-arch binfmt)
+      if: ${{ inputs.setup-qemu }}
+      uses: docker/setup-qemu-action@v4
+      with:
+        platforms: linux/amd64,linux/arm64,linux/arm/v7
+
+    - name: Set up Docker Buildx
+      if: ${{ inputs.setup-qemu && inputs.engine == 'docker' }}
+      uses: docker/setup-buildx-action@v4
+
+    - name: Configure Podman registries (Linux)
+      if: ${{ inputs.setup-podman }}
+      # Podman (unlike Docker) does not assume docker.io for unqualified image
+      # names; Dockerfiles use short names (alpine, debian, buildpack-deps), so add
+      # docker.io to the search list for both rootful and rootless Podman.
+      run: |
+        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
+        mkdir -p "$HOME/.config/containers"
+        printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
+
+    - name: Ensure Podman machine (macOS)
+      if: ${{ inputs.setup-podman-machine }}
+      # The self-hosted macOS runner runs Podman inside a VM ("podman machine").
+      # Make sure one exists and is running (idempotent across runs), and resolve
+      # short image names from docker.io inside the VM (best-effort).
+      run: |
+        podman machine init --now 2>/dev/null || podman machine start 2>/dev/null || true
+        podman machine ssh 'printf "unqualified-search-registries = [\"docker.io\"]\n" | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf' 2>/dev/null || true
+
+    - name: Engine info
+      run: |
+        ENGINE='${{ inputs.engine }}'
+        [ -n "$ENGINE" ] || ENGINE=$(command -v podman >/dev/null 2>&1 && echo "sudo podman" || echo docker)
+        $ENGINE version || true
+        $ENGINE info || true
+
+    - name: Run test suite
+      run: tests/run --all

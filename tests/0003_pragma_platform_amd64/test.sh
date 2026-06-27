@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: qemu-amd64
 # Test: # platform: amd64 directive runs container on x86_64
 
 set -e

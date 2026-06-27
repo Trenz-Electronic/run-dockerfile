@@ -1,8 +1,11 @@
 #!/bin/sh
+# caps: python3
 # Test: #http.static: pragma serves files during build
 # Uses relative path (http-data) which resolves from Dockerfile directory
 
 set -e
+
+. ../lib/engine.sh
 
 # Get the directory where this test lives
 test_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -14,7 +17,7 @@ mkdir -p "$http_dir"
 echo "$expected" > "$http_dir/marker.txt"
 
 # Force rebuild by removing image
-docker rmi -f 0008_pragma_http_static 2>/dev/null || true
+$ENGINE rmi -f 0008_pragma_http_static 2>/dev/null || true
 
 # Run (triggers build which fetches via HTTP using relative path)
 output=$(./run cat /tmp/fetched.txt) || {

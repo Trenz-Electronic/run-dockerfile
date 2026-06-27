@@ -10,6 +10,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 . ../lib/portable.sh
 
 fail=0
@@ -26,7 +28,7 @@ cleanup() {
     rm -rf "$TESTDIR1" "$TESTDIR2" "$DB_SPACE_DIR"
     rm -rf test_create test_existing test_multiple test_envvar test_injection test_space
     rm -f "$HOME"/.run-dockerfile-pwned-0021-*
-    docker rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi test_injection test_space 2>/dev/null || true
+    $ENGINE rmi -f 0021_usermount_create 0021_usermount_existing 0021_usermount_multi test_injection test_space 2>/dev/null || true
 }
 trap cleanup EXIT
 

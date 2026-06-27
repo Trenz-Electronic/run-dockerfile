@@ -9,6 +9,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 # Enable verbose mode to see informative messages
@@ -20,8 +22,8 @@ mkdir -p "$HOME/.config/test-tool-0019"
 echo "test config" > "$HOME/.config/test-tool-0019/config.json"
 
 # Clean up any existing images
-docker rmi -f 0019_copy_single 2>/dev/null || true
-docker rmi -f 0019_copy_multiple 2>/dev/null || true
+$ENGINE rmi -f 0019_copy_single 2>/dev/null || true
+$ENGINE rmi -f 0019_copy_multiple 2>/dev/null || true
 rm -f /tmp/run-dockerfile-home-files-*.tar.gz 2>/dev/null || true
 
 echo "=== Test 1: Copy single file from home ==="
@@ -141,7 +143,7 @@ cd ..
 rm -f "$HOME/.test-license-0019.dat" "$HOME/.has space-0019.dat"
 rm -rf "$HOME/.config/test-tool-0019"
 rm -rf test_single test_multiple test_missing test_space
-docker rmi -f 0019_copy_single 0019_copy_multiple test_space 2>/dev/null || true
+$ENGINE rmi -f 0019_copy_single 0019_copy_multiple test_space 2>/dev/null || true
 
 if [ "$fail" = 0 ]; then
     echo ""

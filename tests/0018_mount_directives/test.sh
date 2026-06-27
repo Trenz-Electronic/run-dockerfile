@@ -9,16 +9,18 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 # Enable verbose mode to see mount directive messages
 export RUN_DOCKERFILE_VERBOSE=1
 
 # Clean up any existing images
-docker rmi -f 0018_mount_pwd 2>/dev/null || true
-docker rmi -f 0018_mount_git 2>/dev/null || true
-docker rmi -f 0018_mount_home 2>/dev/null || true
-docker rmi -f 0018_mount_fallback 2>/dev/null || true
+$ENGINE rmi -f 0018_mount_pwd 2>/dev/null || true
+$ENGINE rmi -f 0018_mount_git 2>/dev/null || true
+$ENGINE rmi -f 0018_mount_home 2>/dev/null || true
+$ENGINE rmi -f 0018_mount_fallback 2>/dev/null || true
 
 echo "=== Test 1: #mount: pwd ==="
 mkdir -p test_pwd
@@ -123,7 +125,7 @@ cd ../..
 
 # Cleanup
 rm -rf test_pwd test_git_root test_home test_fallback
-docker rmi -f 0018_mount_pwd 0018_mount_git 0018_mount_home 0018_mount_fallback 2>/dev/null || true
+$ENGINE rmi -f 0018_mount_pwd 0018_mount_git 0018_mount_home 0018_mount_fallback 2>/dev/null || true
 
 if [ "$fail" = 0 ]; then
     echo ""

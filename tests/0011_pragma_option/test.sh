@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: cgroups
 # Test: #option: pragma passes options to docker run
 
 set -e

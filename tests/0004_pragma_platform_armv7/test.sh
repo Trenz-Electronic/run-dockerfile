@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: qemu-armv7
 # Test: # platform: arm/v7 directive runs container on armv7l
 
 set -e

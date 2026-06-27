@@ -5,8 +5,10 @@
 
 set -e
 
+. ../lib/engine.sh
+
 # Force a rebuild so info() is exercised on the build path.
-docker rmi -f 0034_verbose_nonnumeric 2>/dev/null || true
+$ENGINE rmi -f 0034_verbose_nonnumeric 2>/dev/null || true
 
 output=$(RUN_DOCKERFILE_VERBOSE=notanumber ./run true 2>&1) || {
     echo "FAIL: run failed with a non-numeric RUN_DOCKERFILE_VERBOSE"

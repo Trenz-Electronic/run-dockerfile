@@ -1,7 +1,11 @@
 # run-dockerfile
 
-[![Test Suite](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test.yml)
-[![macOS Test Suite](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test-macos.yml)
+**Tested engines and modes** — each cell runs the full applicable test suite:
+
+|           | Docker | Podman (rootful) | Podman (rootless) |
+|-----------|--------|------------------|-------------------|
+| **Linux** | [![Linux · Docker](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/linux-docker.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/linux-docker.yml) | [![Linux · Podman rootful](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/linux-podman-rootful.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/linux-podman-rootful.yml) | [![Linux · Podman rootless](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/linux-podman-rootless.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/linux-podman-rootless.yml) |
+| **macOS** | [![macOS · Docker](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/macos-docker.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/macos-docker.yml) | [![macOS · Podman](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/macos-podman.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/macos-podman.yml)<br>single cell — containers run in a VM | |
 
 A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone container command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
 
@@ -464,7 +468,10 @@ Override the choice with the `RUN_DOCKERFILE_ENGINE` environment variable (taken
 ```sh
 RUN_DOCKERFILE_ENGINE=docker ./run make          # force Docker
 RUN_DOCKERFILE_ENGINE="sudo podman" ./run make   # force rootful Podman
+RUN_DOCKERFILE_USERNS=keep-id ./run make         # force rootless Podman (no sudo)
 ```
+
+`RUN_DOCKERFILE_USERNS=<mode>` forces rootless Podman with `--userns=<mode>` for *every* container, without adding the `#run-dockerfile: rootless` directive (below) to each Dockerfile — handy for running a whole project rootless. A per-Dockerfile directive still takes precedence.
 
 To see which engine will be used here, without building or running anything:
 

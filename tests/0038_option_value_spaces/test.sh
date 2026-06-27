@@ -3,6 +3,8 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 mount_dir="/tmp/run-dockerfile option spaces-$$"
 
@@ -11,7 +13,7 @@ cleanup() {
     cat > Dockerfile <<'EOF'
 FROM alpine:latest
 EOF
-    docker rmi -f 0038_option_value_spaces 2>/dev/null || true
+    $ENGINE rmi -f 0038_option_value_spaces 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

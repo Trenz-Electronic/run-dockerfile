@@ -1,0 +1,18 @@
+name: macOS · Docker
+
+# Self-hosted macOS runner: push/dispatch only (no pull_request) to limit load on
+# the single machine. Containers run in Docker Desktop's Linux VM, so the Linux-only
+# caps (cgroups, linux, rootless-podman) are intentionally NOT provided and their
+# tests pre-skip.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  cell:
+    uses: ./.github/workflows/cell.yml
+    with:
+      runner-json: '["self-hosted","macOS","ARM64"]'
+      engine: docker
+      cell-caps: 'qemu-amd64 qemu-arm64 qemu-armv7 python3'

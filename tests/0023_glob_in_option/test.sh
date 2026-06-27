@@ -4,11 +4,13 @@
 
 set -e
 
+. ../lib/engine.sh
+
 fail=0
 
 cleanup() {
     rm -f match.txt other.txt
-    docker rmi -f 0023_glob_in_option 2>/dev/null || true
+    $ENGINE rmi -f 0023_glob_in_option 2>/dev/null || true
 }
 trap cleanup EXIT
 

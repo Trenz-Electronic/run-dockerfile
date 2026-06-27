@@ -1,4 +1,5 @@
 #!/bin/sh
+# caps: cgroups
 # Test: Command-line docker options are passed through
 
 set -e

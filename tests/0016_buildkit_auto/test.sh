@@ -6,8 +6,10 @@
 
 set -e
 
+. ../lib/engine.sh
+
 # Force a rebuild so the build actually runs.
-docker rmi -f 0016_buildkit_auto 2>/dev/null || true
+$ENGINE rmi -f 0016_buildkit_auto 2>/dev/null || true
 
 output=$(./run echo "buildkit test" 2>&1)
 
