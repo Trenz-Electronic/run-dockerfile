@@ -23,7 +23,17 @@ cleanup() {
     # Empty host dir created for the spaced-path #option: sample; rmdir is
     # safe because the sample only reads the mount, so it stays empty.
     rmdir "/tmp/my cache" 2>/dev/null || true
-    rm -rf "$workspace"
+    # The #copy.home: / #usermount: samples run with HOME="$home_dir", so rootless
+    # Podman writes its image store under "$workspace/home/.local/share/containers"
+    # with sub-UID ownership the host user cannot unlink - a plain `rm -rf` then
+    # fails and (under set -e in this EXIT trap) would fail the whole test even
+    # though every assertion passed. Remove that tree from inside the engine's user
+    # namespace first (no-op/absent for Docker and rootful Podman), then rm the
+    # rest tolerantly.
+    case " $ENGINE " in
+        *" podman "*) $ENGINE unshare rm -rf "$workspace" 2>/dev/null || true ;;
+    esac
+    rm -rf "$workspace" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
