@@ -1,54 +1,42 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v5: test whether baking
-# the derived (.user-command) image WITH `--platform=linux/<native>` (which
-# build-and-run always does) is what produces an image that trips keep-id +
-# --user 0 at run time. Bake WITH vs WITHOUT --platform, run each identically.
+# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v6: wrap `podman` to log
+# every real invocation while running the ACTUAL failing `tests/run 0036`, so we
+# capture build-and-run's exact build/bake/run commands verbatim and find what my
+# hand-replication missed.
 on:
   workflow_dispatch:
 
 jobs:
   probe:
     runs-on: ubuntu-latest
+    env:
+      RUN_DOCKERFILE_ENGINE: podman
+      RUN_DOCKERFILE_USERNS: keep-id
+      RUN_DOCKERFILE_CELL_CAPS: 'cgroups gnu-stat python3 linux rootless-podman'
     steps:
     - uses: actions/checkout@v6
     - name: Configure Podman registries (rootless)
       run: |
+        printf 'unqualified-search-registries = ["docker.io"]\n' | sudo tee /etc/containers/registries.conf.d/99-docker-io.conf
         mkdir -p "$HOME/.config/containers"
         printf 'unqualified-search-registries = ["docker.io"]\n' > "$HOME/.config/containers/registries.conf"
-    - name: Probe
+    - name: Wrap podman and run tests/run 0036
       run: |
         set +e
-        REPO="$PWD"
-        ARCH=$(podman info --format '{{.Host.Arch}}')
-        printf 'FROM alpine:latest\n' > /tmp/Dockerfile.base
-        podman build -t probe-base -f /tmp/Dockerfile.base /tmp >/dev/null 2>&1
-        mkdir -p /tmp/bakectx; cp run-dockerfile-user-command /tmp/bakectx/
-        printf 'FROM probe-base\nCOPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n' > /tmp/bakectx/Dockerfile
-
-        echo "### bake WITH --platform=linux/$ARCH (as build-and-run does)"
-        podman build -t probe.uc.plat --platform=linux/$ARCH /tmp/bakectx >/dev/null 2>&1; echo "bake-plat-rc=$?"
-        echo "### bake WITHOUT --platform"
-        podman build -t probe.uc.noplat /tmp/bakectx >/dev/null 2>&1; echo "bake-noplat-rc=$?"
-
-        run() { local label="$1"; shift; echo; echo "===== $label ====="; podman "$@" 2>&1 | tail -3; echo "rc=${PIPESTATUS[0]}"; }
-
-        # 1. image baked WITH --platform, run keepid user0 (expect the REAL failure)
-        run "1 baked-WITH-platform, keepid user0 (expect FAIL)" \
-          run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO/tests" \
-          --entrypoint /bin/sh --platform linux/$ARCH probe.uc.plat \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
-
-        # 2. image baked WITHOUT --platform, same run (expect PASS) - the fix
-        run "2 baked-WITHOUT-platform, keepid user0 (expect PASS)" \
-          run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO/tests" \
-          --entrypoint /bin/sh --platform linux/$ARCH probe.uc.noplat \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
-
-        # 3. baked WITH --platform but NO run-time --platform (isolate which one matters)
-        run "3 baked-WITH-platform, keepid user0, NO run-time platform" \
-          run --rm -i --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO/tests" \
-          --entrypoint /bin/sh probe.uc.plat \
-          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id -un
-
-        echo; echo "===== done ====="
+        REAL=$(command -v podman)
+        echo "real podman=$REAL"
+        WRAP="$HOME/wrapbin"; mkdir -p "$WRAP"
+        cat > "$WRAP/podman" <<EOF
+        #!/usr/bin/env bash
+        { printf 'PODMAN'; for a in "\$@"; do printf ' %q' "\$a"; done; printf '\n'; } >> /tmp/podman-calls.log
+        exec "$REAL" "\$@"
+        EOF
+        chmod +x "$WRAP/podman"
+        : > /tmp/podman-calls.log
+        echo "##### Running tests/run 0036 with wrapped podman #####"
+        PATH="$WRAP:$PATH" tests/run 0036
+        echo "tests-rc=$?"
+        echo
+        echo "########## CAPTURED PODMAN CALLS ##########"
+        cat /tmp/podman-calls.log
