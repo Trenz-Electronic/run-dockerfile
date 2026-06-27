@@ -3,15 +3,15 @@
 [![Test Suite](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test.yml)
 [![macOS Test Suite](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test-macos.yml/badge.svg)](https://github.com/Trenz-Electronic/run-dockerfile/actions/workflows/test-macos.yml)
 
-A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone Docker command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
+A single bash script that turns Dockerfiles into ready-to-run applications without long and error-prone container command lines by automating user mapping, volume mounts, image rebuilds, and more. It enables simultaneous execution of multiple tools with conflicting OS or library dependencies in your workflow by simply prefixing tool invocations with a symlink to the build-and-run script.
 
 run-dockerfile handles the common setup work for containerized development:
 - **User/group mapping** - No more permission headaches with mounted volumes
 - **Volume mounting** - Your project files are automatically available
 - **Image management** - Containers are built and rebuilt automatically as needed
 - **TTY handling** - Interactive sessions just work
-- **Common options** - Keep repeated Docker options in the Dockerfile
-- **Cross-architecture builds** - Run builds in a target-architecture container when Docker supports that platform
+- **Common options** - Keep repeated container engine options in the Dockerfile
+- **Cross-architecture builds** - Run builds in a target-architecture container when your container engine supports that platform
 - **Large tool installation files outside build context** - Easily incorporated into your Dockerfile, just invoke the installer. Many installers offer a command-line flag for a quiet, unattended install; when none is available, a small `expect` script can drive the prompts (see [Non-interactive installers](#non-interactive-installers)).
 
 ## Quick start
@@ -451,9 +451,9 @@ As long as each container directory's `run` symlink points to `run-dockerfile/bu
 
 **Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); run-dockerfile checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
 
-## Container engine: Docker or Podman
+## Container engine: Podman or Docker
 
-run-dockerfile works with **Docker** or **Podman**. You normally don't configure anything — it picks an engine automatically:
+run-dockerfile works with **Podman** or **Docker**. You normally don't configure anything — it picks an engine automatically:
 
 - If only one of `docker` / `podman` is installed, it uses that one.
 - If **both** are installed, it prefers **Podman**.
@@ -481,7 +481,9 @@ RUN_DOCKERFILE_PRINT_ENGINE=1 ./run
 FROM debian:12
 ```
 
-The value is passed straight to `podman run --userns=...`; `keep-id` is the mode that preserves host file ownership. This directive requires Podman and forces the rootless (non-`sudo`) engine.
+`keep-id` is the supported mode: it maps your host UID 1:1 into the container so bind-mounted files stay owned by you. The value is passed verbatim to `podman run --userns=...`, so other Podman user-namespace modes are accepted too — but only `keep-id` preserves host ownership; see Podman's [`podman run --userns`](https://docs.podman.io/en/latest/markdown/podman-run.1.html#userns-mode) documentation for what the other values do.
+
+**Only rootless Podman is supported for now.** This directive forces the rootless (non-`sudo`) Podman engine and requires `podman`. Rootless *Docker* is not supported: `--userns=keep-id` does not exist there, which is the first hurdle among several.
 
 **Podman and short image names:** unlike Docker, Podman does not assume Docker Hub for unqualified image names. If a `FROM` line uses a short name that Podman cannot resolve (e.g. `FROM buildpack-deps:bookworm` fails while `FROM alpine` works via Podman's built-in aliases), either add `docker.io` to your Podman config:
 
@@ -496,7 +498,7 @@ or fully qualify the image (`FROM docker.io/library/buildpack-deps:bookworm`), w
 
 **On the host:**
 
-- Linux or macOS with bash and a container engine — **Docker or Podman** (see [Container engine](#container-engine-docker-or-podman)).
+- Linux or macOS with bash and a container engine — **Podman or Docker** (see [Container engine](#container-engine-podman-or-docker)).
 - For foreign-architecture `#run-dockerfile: platform` builds/runs, the engine must have binfmt/QEMU support configured for the requested platform.
 - GNU `tar` is optional; when unavailable, run-dockerfile uses a portable metadata-manifest hash for rebuild detection.
 - `python3` — only when using `#run-dockerfile: http.static`.

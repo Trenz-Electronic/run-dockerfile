@@ -3,7 +3,7 @@
 
 ## Project Overview
 
-run-dockerfile is a single-script Docker workflow tool that automates image building, user mapping, and volume mounting for development environments.
+run-dockerfile is a single-script container workflow tool that automates image building, user mapping, and volume mounting for development environments. It drives **Podman or Docker** — when both are installed Podman is preferred (rootful Podman as `sudo podman`); see the engine-resolution and rootless notes under Architecture.
 
 ## Design Principles
 
@@ -122,7 +122,9 @@ Per-engine differences handled in the host driver:
 - **Prefix-only** — a brand-new directive, so it has **no** deprecated unprefixed (`#rootless:`) spelling. It is registered only in `build_directive_stream()`'s prefixed `known` list; an unprefixed `#rootless:` line is treated as a plain comment.
 - The value is **mandatory** and must be a `--userns=<mode>` token (validated `^--userns=[A-Za-z0-9:=,._-]+$`); it is passed **verbatim** to `podman run`. Multiple `rootless` directives must agree on a single mode.
 - Presence **forces rootless Podman**: `ENGINE=(podman)` with **no** sudo. It requires `podman` on `PATH` (else a hard error), and conflicts with a non-Podman `RUN_DOCKERFILE_ENGINE` (e.g. `docker`) — also a hard error.
-- **Why rootless needs `--userns=keep-id`:** rootless Podman runs in a user namespace that remaps the container's UIDs through the invoking user's `subuid` range, so a non-root in-container process would write bind-mounted files owned by a shifted subuid (e.g. `100999`) rather than the host UID. `keep-id` pins the host UID 1:1, restoring run-dockerfile's core invariant (bind-mounted files owned by the host user). Other modes (`host`, `nomap`, …) are accepted and passed through but reintroduce the ownership shift. The `--userns` arg rides on `podman run` only (`ROOTLESS_RUN_ARGS`), not on `build` (rootless builds just use the rootless image store). Regression-tested by `tests/0045` (parsing/validation/conflict, stub-based) and `tests/0046` (keep-id host-UID ownership against a real rootless Podman; skips where rootless Podman is unavailable, e.g. inside an unprivileged LXC container).
+- **Why rootless needs `--userns=keep-id`:** rootless Podman runs in a user namespace that remaps the container's UIDs through the invoking user's `subuid` range, so a non-root in-container process would write bind-mounted files owned by a shifted subuid (e.g. `100999`) rather than the host UID. `keep-id` pins the host UID 1:1, restoring run-dockerfile's core invariant (bind-mounted files owned by the host user). `keep-id` is the supported value; other modes (`host`, `nomap`, …) are accepted and passed through verbatim but reintroduce the ownership shift — see Podman's [`podman run --userns`](https://docs.podman.io/en/latest/markdown/podman-run.1.html#userns-mode) docs for their semantics. The `--userns` arg rides on `podman run` only (`ROOTLESS_RUN_ARGS`), not on `build` (rootless builds just use the rootless image store). Regression-tested by `tests/0045` (parsing/validation/conflict, stub-based) and `tests/0046` (keep-id host-UID ownership against a real rootless Podman; skips where rootless Podman is unavailable, e.g. inside an unprivileged LXC container).
+
+**Rootless is Podman-only for now.** Rootless *Docker* is unsupported: `--userns=keep-id` is a Podman/Buildah feature with no rootless-Docker equivalent — the first hurdle among several (a rootless-Docker path would need its own run-as-namespaced-root branch rather than reusing the Podman one). GitHub-hosted Ubuntu runners also ship **rootful** Docker only, so a CI lane would have to install rootless Docker per-run.
 
 ### Smart Rebuild Detection
 
