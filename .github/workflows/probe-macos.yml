@@ -1,58 +1,55 @@
 name: probe · macOS podman mounts
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). Pinpoints why bind
-# mounts of host /tmp paths (especially paths with spaces) fail under the macOS
-# podman-machine VM with "statfs ...: no such file or directory" - i.e. which host
-# directories the VM actually shares, and whether a space in the path is the
-# trigger or merely incidental. Delete once the macOS mount behavior is settled.
+# DIAGNOSTIC-ONLY (workflow_dispatch). Reproduce the two remaining macOS Podman
+# failures with full error output (the tests hide them behind dash set -e +
+# command substitution): 0017 Test 5 (rebuild after adding a context file) and
+# 0006 (host reads a $HOME marker the container wrote).
 on:
   workflow_dispatch:
+    inputs:
+      engine:
+        description: 'engine string (podman | podman --connection podman-machine-default-root)'
+        default: 'podman'
 
 jobs:
   probe:
     runs-on: ["self-hosted","macOS","ARM64"]
     steps:
     - uses: actions/checkout@v6
-
     - name: Ensure machine
       run: |
         podman machine start 2>/dev/null || true
         podman info >/dev/null
-
-    - name: Inspect machine shares
+    - name: Reproduce 0017 Test 5 and 0006
+      env:
+        RUN_DOCKERFILE_ENGINE: ${{ inputs.engine }}
+        RUN_DOCKERFILE_VERBOSE: '1'
       run: |
         set +e
-        echo "### podman machine list"; podman machine list
-        echo "### machine inspect (Mounts/Volumes)"
-        podman machine inspect 2>&1 | python3 -c 'import sys,json; d=json.load(sys.stdin); [print(json.dumps(m)) for m in (d[0].get("Mounts") or [])] ; print("Resources/SharedDirs maybe:"); print(json.dumps(d[0].get("Rosetta", "n/a")))' 2>&1 | head -40
-        echo "### TMPDIR=$TMPDIR  HOME=$HOME  PWD=$PWD"
+        REPO="$PWD"
 
-    - name: Probe mounts
-      run: |
-        set +e
-        run() { local label="$1"; shift; echo; echo "===== $label ====="; echo "+ podman $*"; podman "$@" 2>&1 | tail -4; echo "rc=${PIPESTATUS[0]}"; }
+        echo "########## 0017 Test 5: rebuild after adding a context file ##########"
+        P=/tmp/probe-0017; rm -rf "$P"; mkdir -p "$P"; cd "$P"
+        printf 'FROM alpine:latest\n' > Dockerfile
+        ln -sf "$REPO/build-and-run" run
+        echo "--- first build ---"; ./run echo hello; echo "first-rc=$?"
+        echo "--- add context file + run (this is Test 5) ---"
+        echo "test content" > test_file.txt
+        ./run echo "after context change"
+        echo "test5-rc=$?"
+        cd "$REPO"
 
-        # Plain /tmp dir, no space
-        D1=/tmp/probe_plain.$$; mkdir -p "$D1"; echo hi > "$D1/f"
-        # /tmp dir WITH a space
-        D2="/tmp/probe space.$$"; mkdir -p "$D2"; echo hi > "$D2/f"
-        # $HOME dir, no space
-        D3="$HOME/probe_plain.$$"; mkdir -p "$D3"; echo hi > "$D3/f"
-        # $HOME dir WITH a space
-        D4="$HOME/probe space.$$"; mkdir -p "$D4"; echo hi > "$D4/f"
-        # repo checkout (under runner work dir)
-        D5="$PWD"
-
-        echo "Created: $D1 | $D2 | $D3 | $D4 | $D5"
-
-        run "A /tmp no-space"        run --rm -v "$D1:/mnt" alpine sh -c 'ls -la /mnt'
-        run "B /tmp WITH space"      run --rm -v "$D2:/mnt" alpine sh -c 'ls -la /mnt'
-        run "C \$HOME no-space"      run --rm -v "$D3:/mnt" alpine sh -c 'ls -la /mnt'
-        run "D \$HOME WITH space"    run --rm -v "$D4:/mnt" alpine sh -c 'ls -la /mnt'
-        run "E repo checkout"        run --rm -v "$D5:/mnt" alpine sh -c 'ls /mnt | head -3'
-        # private/tmp (macOS /tmp is a symlink to /private/tmp)
-        run "F /private/tmp no-space" run --rm -v "/private${D1}:/mnt" alpine sh -c 'ls -la /mnt'
-        run "G /private/tmp space"    run --rm -v "/private${D2}:/mnt" alpine sh -c 'ls -la /mnt'
-
-        rm -rf "$D1" "$D2" "$D3" "$D4"
-        echo; echo "===== done ====="
+        echo
+        echo "########## 0006: container writes \$HOME marker, host reads it ##########"
+        Q=/tmp/probe-0006; rm -rf "$Q"; mkdir -p "$Q"; cd "$Q"
+        printf '#mount: home\nFROM alpine:latest\n' > Dockerfile
+        ln -sf "$REPO/build-and-run" run
+        marker="$HOME/.run-dockerfile-probe-0006-$$"
+        rm -f "$marker"
+        ./run sh -c "echo MARKER_CONTENT > '$marker'; ls -ln '$marker'; id"
+        echo "write-rc=$?"
+        echo "--- host stat + read ---"
+        ls -ln "$marker" 2>&1
+        cat "$marker" 2>&1
+        echo "read-rc=$?"
+        rm -f "$marker" 2>/dev/null || true
