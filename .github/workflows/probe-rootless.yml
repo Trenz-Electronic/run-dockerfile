@@ -1,10 +1,9 @@
 name: probe · rootless idmap
 
-# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). Runs a battery of raw
-# rootless `podman run` variants to pinpoint which mount/flag combination triggers
-# the "container uses ID mappings ... but doesn't map UID 0" rejection under
-# --userns=keep-id --user 0, and which alternative clears it. Delete once the
-# rootless run-path fix is settled.
+# DIAGNOSTIC-ONLY throwaway workflow (workflow_dispatch). v2: replicate the exact
+# build-and-run flow (build base, then bake the entry script into a derived image
+# with COPY --chmod=0755) and run THAT image under keep-id, to reproduce the
+# "doesn't map UID 0" rejection and validate the fix. Delete once settled.
 on:
   workflow_dispatch:
 
@@ -22,50 +21,56 @@ jobs:
     - name: Probe
       run: |
         set +e
-        echo "### podman version"; podman version | sed -n '1,6p'
-        echo "### whoami / id"; id
-        echo "### default uid_map"; podman unshare cat /proc/self/uid_map
-        echo "### keep-id uid_map"; podman run --rm --userns=keep-id alpine cat /proc/self/uid_map 2>&1 | head -5
-
+        export DOCKER_BUILDKIT=1
+        echo "### podman version"; podman version | sed -n '1,4p'
         REPO="$PWD"
-        echo "### REPO=$REPO owner:"; stat -c '%u:%g %n' "$REPO"
-        TAR=/tmp/probe-home.tar.gz
-        echo hello > /tmp/probe-file.txt
-        tar czf "$TAR" -C /tmp probe-file.txt
-        echo "### TAR owner:"; stat -c '%u:%g %n' "$TAR"
-        UM=/tmp/probe-usermount
-        mkdir -p "$UM"
-        echo "### UM owner:"; stat -c '%u:%g %n' "$UM"
 
-        run() { # label, then podman args
-          local label="$1"; shift
-          echo
-          echo "===== $label ====="
-          echo "+ podman $*"
-          podman "$@" 2>&1 | tail -4
-          echo "rc=${PIPESTATUS[0]}"
-        }
+        # Build base + bake derived image exactly like build-and-run does.
+        echo "### build base FROM alpine"
+        printf 'FROM alpine:latest\n' > /tmp/Dockerfile.base
+        podman build -t probe-base -f /tmp/Dockerfile.base /tmp 2>&1 | tail -2
+        echo "### bake derived (COPY --chmod=0755 run-dockerfile-user-command)"
+        mkdir -p /tmp/bakectx
+        cp run-dockerfile-user-command /tmp/bakectx/
+        printf 'FROM probe-base\nCOPY --chmod=0755 run-dockerfile-user-command /bin/run-dockerfile-user-command\n' > /tmp/bakectx/Dockerfile
+        podman build -t probe-base.user-command /tmp/bakectx 2>&1 | tail -2
 
-        # A: 0036-like — keep-id + --user 0 + repo (.git default) mount only
-        run "A repo-mount keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -w "$REPO" alpine id
-        # B: 0019-like — add the /tmp copy.home tarball bind mount
-        run "B repo + /tmp tarball, keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz" alpine id
-        # C: tarball mount ALONE (isolate the /tmp bind mount as the trigger)
-        run "C /tmp tarball only, keepid user0" run --rm --userns=keep-id --user 0 -v "$TAR:/tmp/home-files.tar.gz" alpine id
-        # D: 0021-like — usermount dir bind mount
-        run "D usermount dir, keepid user0" run --rm --userns=keep-id --user 0 -v "$UM:$UM" alpine id
-        # E: same repo mount but NO --user (image default root)
-        run "E repo-mount keepid no --user" run --rm --userns=keep-id -v "$REPO:$REPO" alpine id
-        # F: run as host uid instead of 0 (the redesign candidate)
-        run "F repo+tarball keepid user=hostuid" run --rm --userns=keep-id --user "$(id -u):$(id -g)" -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz" alpine id
-        # G: --user 0 + tarball mounted with :U (chown volume to container user)
-        run "G repo+tarball:U keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz:U" alpine id
-        # H: --user 0 + explicit :idmap on the tarball volume
-        run "H repo+tarball:idmap keepid user0" run --rm --userns=keep-id --user 0 -v "$REPO:$REPO" -v "$TAR:/tmp/home-files.tar.gz:idmap" alpine id
-        # I: --user 0 + keep-id WITHOUT mounting the tarball into /tmp but into /home
-        run "I tarball into /root, keepid user0" run --rm --userns=keep-id --user 0 -v "$TAR:/root/home-files.tar.gz" alpine id
-        # J: control — no userns at all (rootless default), --user 0, tarball
-        run "J tarball, NO userns, user0" run --rm --user 0 -v "$TAR:/tmp/home-files.tar.gz" alpine id
+        run() { local label="$1"; shift; echo; echo "===== $label ====="; echo "+ podman $*"; podman "$@" 2>&1 | tail -5; echo "rc=${PIPESTATUS[0]}"; }
 
-        echo
-        echo "===== done ====="
+        # 1. Reproduce: baked image, keep-id, --user 0, repo mount (0036 exact shape)
+        run "1 BAKED keepid user0 repo-mount" run --rm --userns=keep-id --user 0 \
+          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
+
+        # 2. Plain alpine, same args (control — expect OK, proving it's the baked image)
+        run "2 PLAIN alpine keepid user0 repo-mount" run --rm --userns=keep-id --user 0 \
+          -v "$REPO:$REPO" -w "$REPO" alpine id
+
+        # 3. Inspect what idmap the baked image's layers carry
+        echo; echo "===== 3 baked image inspect ====="
+        podman image inspect probe-base.user-command --format '{{.GraphDriver.Name}} {{json .RootFS}}' 2>&1 | head -2
+
+        # 4. FIX candidate A: run baked image as host uid (keep-id maps 1:1), no --user 0
+        run "4 BAKED keepid user=hostuid repo-mount" run --rm --userns=keep-id --user "$(id -u):$(id -g)" \
+          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
+
+        # 5. FIX candidate B: bake WITHOUT --chmod (plain COPY, then chmod in a RUN)
+        printf 'FROM probe-base\nCOPY run-dockerfile-user-command /bin/run-dockerfile-user-command\nRUN chmod 0755 /bin/run-dockerfile-user-command\n' > /tmp/bakectx/Dockerfile
+        podman build -t probe-base.uc2 /tmp/bakectx 2>&1 | tail -1
+        run "5 BAKED(no --chmod) keepid user0 repo-mount" run --rm --userns=keep-id --user 0 \
+          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.uc2 \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
+
+        # 6. FIX candidate C: keep --user 0 but add --userns=keep-id:uid=0,gid=0 (map UID 0 too)
+        run "6 BAKED keepid:uid0 user0 repo-mount" run --rm --userns=keep-id:uid=0,gid=0 --user 0 \
+          -v "$REPO:$REPO" -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
+
+        # 7. FIX candidate D: --user 0 + copy.home tarball, baked image (0019 shape)
+        echo hello > /tmp/probe-file.txt; tar czf /tmp/probe-home.tar.gz -C /tmp probe-file.txt
+        run "7 BAKED keepid user0 repo + tarball" run --rm --userns=keep-id --user 0 \
+          -v "$REPO:$REPO" -v /tmp/probe-home.tar.gz:/tmp/home-files.tar.gz -w "$REPO" --entrypoint /bin/sh probe-base.user-command \
+          /bin/run-dockerfile-user-command "$(id -un)" "$(id -u)" "$(id -g)" "$(id -gn)" "$HOME" id
+
+        echo; echo "===== done ====="
