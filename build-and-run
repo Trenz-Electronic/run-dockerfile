@@ -809,6 +809,33 @@ else
   fi
 fi
 
+# Rootless Podman on macOS cannot make a bind-mounted private $HOME readable by the
+# in-container host-matching user, so fail early with an explanation rather than let
+# the command die later on a confusing "Permission denied" for every file under the
+# mount. The macOS `podman machine` VM shares $HOME over virtiofs, and rootless
+# Podman's user namespace maps the host user to *container root*: a mode-700 $HOME
+# then appears root-owned inside the container, and the unprivileged user the command
+# runs as cannot traverse it. There is no host-side fix that keeps run-dockerfile's
+# privileged-setup model -- `--userns=keep-id` maps the user but then the root setup
+# phase cannot traverse the 700 home (chdir fails), and idmap mounts are unsupported
+# on virtiofs. Rootful Podman (VM root traverses everything) and Docker are fine, so
+# the check is gated on a positive rootless probe (`podman info`), and only when the
+# resolved mount really is $HOME. Use rootful Podman, Docker, or #copy.home:/#usermount:.
+if [ "$MDIR" = "$HOME" ] && [ "$ENGINE_KIND" = podman ] && [ "$(uname -s)" = Darwin ]; then
+  if [ "$("${ENGINE[@]}" info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ]; then
+    >&2 echo "ERROR: mounting \$HOME ($HOME) is not supported under rootless Podman on macOS."
+    >&2 echo "       The 'podman machine' VM shares \$HOME over virtiofs and rootless Podman maps"
+    >&2 echo "       your host user to container root, so a private (mode 700) \$HOME is not"
+    >&2 echo "       readable by the unprivileged user your command runs as (Permission denied)."
+    >&2 echo "       Use one of these instead:"
+    >&2 echo "         - rootful Podman, e.g. RUN_DOCKERFILE_ENGINE='podman --connection <machine>-root'"
+    >&2 echo "         - Docker, e.g. RUN_DOCKERFILE_ENGINE=docker"
+    >&2 echo "         - #copy.home: <file>   to copy specific \$HOME files into the container"
+    >&2 echo "         - #usermount: <path>   or  #mount: pwd   to mount a non-home directory"
+    exit 1
+  fi
+fi
+
 # Optimized inspect: get architecture and context hash in one call
 INSPECT_DATA=$("${ENGINE[@]}" inspect --format='{{.Architecture}}|{{index .Config.Labels "run-dockerfile.context-hash"}}' "${tag}" 2>/dev/null) || true
 

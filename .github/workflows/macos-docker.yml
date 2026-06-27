@@ -21,4 +21,4 @@ jobs:
     with:
       runner-json: '["self-hosted","macOS","ARM64"]'
       engine: docker
-      cell-caps: 'qemu-amd64 qemu-arm64 qemu-armv7 python3'
+      cell-caps: 'qemu-amd64 qemu-arm64 qemu-armv7 python3 home-bind'

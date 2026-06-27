@@ -25,5 +25,5 @@ jobs:
       # UID 0", and a multi-arch store makes `FROM alpine` resolve to a foreign
       # arch. Cross-arch is engine-agnostic and is covered by the Docker and
       # rootful-Podman cells, so this cell omits the qemu-* caps and QEMU setup.
-      cell-caps: 'cgroups gnu-stat python3 linux rootless-podman'
+      cell-caps: 'cgroups gnu-stat python3 linux rootless-podman home-bind'
       setup-podman: true

@@ -1,9 +1,14 @@
 name: macOS · Podman (rootless)
 
 # Self-hosted macOS runner; Podman runs in a VM ("podman machine"). The default
-# connection is rootless (Security.Rootless=true). The VM's virtiofs handles
-# host<->VM file ownership, so no keep-id is needed here. Caps stay conservative;
-# expand once a run shows them green.
+# connection is rootless (Security.Rootless=true). keep-id is intentionally NOT used:
+# on this virtiofs share it breaks bind-mount traversal (the root setup phase cannot
+# chdir into a 700 $HOME), so the cell runs with Podman's default user namespace.
+# Consequently this cell does NOT provide the `home-bind` cap: rootless Podman maps
+# the host user to container root, leaving a bind-mounted private (700) $HOME
+# unreadable by the unprivileged in-container user, so `#mount: home` (tests/0006) is
+# unsupported here and build-and-run errors out early. All other cells provide
+# home-bind. Caps otherwise stay conservative; expand once a run shows them green.
 on:
   push:
     branches: [ main ]

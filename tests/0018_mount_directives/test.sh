@@ -79,17 +79,33 @@ cat > Dockerfile <<'EOF'
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
-output=$(./run pwd 2>&1)
-case "$output" in
-    *"Mount directive: Using home directory"*)
-        echo "PASS: #mount: home directive recognized"
-        ;;
-    *)
-        echo "FAIL: #mount: home not recognized"
-        echo "Output: $output"
-        fail=1
-        ;;
-esac
+# `|| true`: on rootless Podman on macOS, mounting a private $HOME is unsupported and
+# build-and-run exits early by design, so ./run is expected to fail there.
+output=$(./run pwd 2>&1) || true
+if [ "$(uname -s)" = Darwin ] && [ "$($ENGINE info --format '{{.Host.Security.Rootless}}' 2>/dev/null)" = true ]; then
+    # Rootless Podman on macOS: #mount: home must error early with the explanation.
+    case "$output" in
+        *"not supported under rootless Podman on macOS"*)
+            echo "PASS: #mount: home errors with explanation on rootless macOS Podman"
+            ;;
+        *)
+            echo "FAIL: expected rootless-macOS home-mount error"
+            echo "Output: $output"
+            fail=1
+            ;;
+    esac
+else
+    case "$output" in
+        *"Mount directive: Using home directory"*)
+            echo "PASS: #mount: home directive recognized"
+            ;;
+        *)
+            echo "FAIL: #mount: home not recognized"
+            echo "Output: $output"
+            fail=1
+            ;;
+    esac
+fi
 cd ..
 
 echo ""

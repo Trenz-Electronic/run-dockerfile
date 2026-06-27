@@ -20,5 +20,5 @@ jobs:
     with:
       runner-json: '["self-hosted","macOS","ARM64"]'
       engine: 'podman --connection podman-machine-default-root'
-      cell-caps: 'qemu-arm64'
+      cell-caps: 'qemu-arm64 home-bind'
       setup-podman-machine: true

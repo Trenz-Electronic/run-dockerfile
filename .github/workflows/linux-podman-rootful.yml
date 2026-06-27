@@ -19,6 +19,6 @@ jobs:
     with:
       runner-json: '"ubuntu-latest"'
       engine: 'sudo podman'
-      cell-caps: 'qemu-amd64 qemu-arm64 qemu-armv7 cgroups gnu-stat python3 linux'
+      cell-caps: 'qemu-amd64 qemu-arm64 qemu-armv7 cgroups gnu-stat python3 linux home-bind'
       setup-qemu: true
       setup-podman: true
