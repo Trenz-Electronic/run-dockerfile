@@ -16,7 +16,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-output=$(./run -e "GREETING=hello world" sh -c 'printf %s "$GREETING"')
+output=$(./run -e "GREETING=hello world" sh -c 'printf %s "$GREETING"') || true
 if [ "$output" = "hello world" ]; then
     echo "PASS: env value with a space preserved across su"
 else

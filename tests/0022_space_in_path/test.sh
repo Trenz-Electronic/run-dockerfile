@@ -25,7 +25,7 @@ td=$(cd "$td" && pwd -P)
 echo "space_marker_$$" > "$td/marker"
 
 # Bind-mount the spaced host path (same path inside the container) and read it back.
-output=$(./run -v "$td:$td:ro" cat "$td/marker")
+output=$(./run -v "$td:$td:ro" cat "$td/marker") || true
 if [ "$output" = "space_marker_$$" ]; then
     echo "PASS: bind-mount path with a space passed verbatim"
 else

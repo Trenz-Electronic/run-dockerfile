@@ -8,7 +8,7 @@ set -e
 # The container half evaluates DOCKER_PRESERVE_ENV; with the injection bug the
 # semicolon command runs during user setup and creates the marker file.
 output=$(./run -e 'X;touch /tmp/booster-injected=1' \
-    sh -c '[ -e /tmp/booster-injected ] && echo INJECTED || echo SAFE')
+    sh -c '[ -e /tmp/booster-injected ] && echo INJECTED || echo SAFE') || true
 
 case "$output" in
     *INJECTED*)

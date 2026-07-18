@@ -24,7 +24,11 @@ FROM alpine:latest
 EOF
 ln -sf ../../../build-and-run run
 # Test that basic commands work (su-based privilege drop)
-output=$(./run whoami 2>&1)
+output=$(./run whoami 2>&1) || {
+    echo "FAIL: ./run whoami failed"
+    echo "Output: $output"
+    fail=1
+}
 expected_user=$(whoami)
 if echo "$output" | grep -q "$expected_user"; then
     echo "PASS: Container runs as correct user via su"
@@ -46,7 +50,11 @@ RUN apk add --no-cache sudo
 EOF
 ln -sf ../../../build-and-run run
 # Test that sudo works
-output=$(./run sudo whoami 2>&1)
+output=$(./run sudo whoami 2>&1) || {
+    echo "FAIL: ./run sudo whoami failed"
+    echo "Output: $output"
+    fail=1
+}
 if echo "$output" | grep -q "root"; then
     echo "PASS: sudo works with #sudo: all directive"
 else
@@ -85,7 +93,11 @@ FROM alpine:latest
 RUN apk add --no-cache sudo && rm -rf /etc/sudoers.d
 EOF
 ln -sf ../../../build-and-run run
-output=$(./run sh -c 'test "$(stat -c %a /etc/sudoers.d/10-docker-users)" = 440 && sudo whoami' 2>&1)
+output=$(./run sh -c 'test "$(stat -c %a /etc/sudoers.d/10-docker-users)" = 440 && sudo whoami' 2>&1) || {
+    echo "FAIL: sudoers.d recovery run failed"
+    echo "Output: $output"
+    fail=1
+}
 if echo "$output" | grep -q "root"; then
     echo "PASS: missing sudoers.d was created and sudo works"
 else

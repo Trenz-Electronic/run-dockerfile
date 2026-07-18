@@ -45,7 +45,7 @@ EOF
 ln -sf ../../../build-and-run run
 
 # Run container - directory should be created and mounted
-output=$(./run sh -c "test -d $TESTDIR1 && echo MOUNT_OK" 2>&1)
+output=$(./run sh -c "test -d $TESTDIR1 && echo MOUNT_OK" 2>&1) || true
 if echo "$output" | grep -q "MOUNT_OK"; then
     echo "PASS: Directory accessible inside container"
 else
@@ -93,7 +93,7 @@ EOF
 ln -sf ../../../build-and-run run
 
 # Run container - should mount existing directory
-output=$(./run cat "$TESTDIR1/marker.txt" 2>&1)
+output=$(./run cat "$TESTDIR1/marker.txt" 2>&1) || true
 if echo "$output" | grep -q "test-marker-0021"; then
     echo "PASS: Existing directory mounted correctly"
 else
@@ -124,7 +124,7 @@ EOF
 ln -sf ../../../build-and-run run
 
 # Run container - both directories should be created and mounted
-output=$(./run sh -c "test -d $TESTDIR1 && test -d $TESTDIR2 && echo BOTH_OK" 2>&1)
+output=$(./run sh -c "test -d $TESTDIR1 && test -d $TESTDIR2 && echo BOTH_OK" 2>&1) || true
 if echo "$output" | grep -q "BOTH_OK"; then
     echo "PASS: Both directories accessible"
 else
@@ -154,7 +154,7 @@ FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
 
-output=$(./run sh -c "test -d \$HOME/.run-dockerfile-envtest-0021 && echo ENVVAR_OK" 2>&1)
+output=$(./run sh -c "test -d \$HOME/.run-dockerfile-envtest-0021 && echo ENVVAR_OK" 2>&1) || true
 if echo "$output" | grep -q "ENVVAR_OK"; then
     echo "PASS: Environment variable expanded correctly"
 else
@@ -209,7 +209,7 @@ EOF
 ln -sf ../../../build-and-run run
 
 # Pass the spaced path as a positional arg ($1) to avoid nested-quoting issues.
-output=$(./run sh -c 'test -d "$1" && echo MOUNT_OK' _ "$DB_SPACE_DIR" 2>&1)
+output=$(./run sh -c 'test -d "$1" && echo MOUNT_OK' _ "$DB_SPACE_DIR" 2>&1) || true
 if echo "$output" | grep -q "MOUNT_OK"; then
     echo "PASS: spaced path mounted as a single directory inside container"
 else

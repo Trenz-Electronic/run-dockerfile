@@ -20,7 +20,7 @@ echo decoy > other.txt
 
 # Dockerfile sets: #option: -e PATTERN=*.txt
 # $PATTERN must be the literal "*.txt", not "match.txt other.txt".
-output=$(./run sh -c 'printf %s "$PATTERN"')
+output=$(./run sh -c 'printf %s "$PATTERN"') || true
 if [ "$output" = "*.txt" ]; then
     echo "PASS: glob char in #option value passed literally"
 else

@@ -21,9 +21,9 @@ $ENGINE build -f Dockerfile.tmp -t 0015_user_mapping_conflict . >/dev/null 2>&1
 # Run and check group mapping. If another image group already has the host GID,
 # reverse lookup (`id -gn`) may return that first image group instead of the
 # appended conflict-renamed alias.
-container_group=$(./run id -gn)
-container_gid=$(./run id -g)
-container_groups=$(./run cat /etc/group)
+container_group=$(./run id -gn) || { echo "FAIL: ./run id -gn failed"; exit 1; }
+container_gid=$(./run id -g) || { echo "FAIL: ./run id -g failed"; exit 1; }
+container_groups=$(./run cat /etc/group) || { echo "FAIL: ./run cat /etc/group failed"; exit 1; }
 
 # Cleanup
 rm -f Dockerfile.tmp

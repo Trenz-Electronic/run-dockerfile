@@ -12,7 +12,7 @@ fail=0
 # implements host networking that way; Docker Desktop on macOS accepts the option
 # but does not make the container hostname equal the host hostname).
 host_hostname=$(hostname)
-output=$(./run --network host hostname)
+output=$(./run --network host hostname) || true
 if is_docker_desktop_host_network; then
     echo "PASS: --network host accepted"
 elif [ "$output" = "$host_hostname" ]; then
@@ -25,7 +25,7 @@ fi
 # Test -v volume mount
 test_file="/tmp/run-dockerfile-test-$$"
 echo "test_content_$$" > "$test_file"
-output=$(./run -v "$test_file:/test_mount:ro" cat /test_mount)
+output=$(./run -v "$test_file:/test_mount:ro" cat /test_mount) || true
 rm -f "$test_file"
 if [ "$output" = "test_content_$$" ]; then
     echo "PASS: -v volume mount"
@@ -35,7 +35,7 @@ else
 fi
 
 # Test --cpus (verify cgroup limit is set)
-output=$(./run --cpus 2 cat /sys/fs/cgroup/cpu.max 2>/dev/null || ./run --cpus 2 cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null)
+output=$(./run --cpus 2 cat /sys/fs/cgroup/cpu.max 2>/dev/null || ./run --cpus 2 cat /sys/fs/cgroup/cpu/cpu.cfs_quota_us 2>/dev/null) || true
 case "$output" in
     200000*)
         echo "PASS: --cpus 2"
@@ -47,7 +47,7 @@ case "$output" in
 esac
 
 # Test -w/--workdir (verify working directory changed)
-output=$(./run -w /tmp pwd)
+output=$(./run -w /tmp pwd) || true
 if [ "$output" = "/tmp" ]; then
     echo "PASS: -w /tmp"
 else

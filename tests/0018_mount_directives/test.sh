@@ -30,7 +30,11 @@ cat > Dockerfile <<'EOF'
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
-output=$(./run pwd 2>&1)
+output=$(./run pwd 2>&1) || {
+    echo "FAIL: ./run pwd failed"
+    echo "Output: $output"
+    fail=1
+}
 case "$output" in
     *"Mount directive: Using current directory"*)
         echo "PASS: #mount: pwd directive recognized"
@@ -56,7 +60,11 @@ cat > Dockerfile <<'EOF'
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../../build-and-run run
-output=$(./run pwd 2>&1)
+output=$(./run pwd 2>&1) || {
+    echo "FAIL: ./run pwd failed"
+    echo "Output: $output"
+    fail=1
+}
 git_root=$(cd .. && pwd)
 case "$output" in
     *"Mount directive: Using git root directory ($git_root)"*)
@@ -120,7 +128,11 @@ cat > Dockerfile <<'EOF'
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../../build-and-run run
-output=$(./run pwd 2>&1)
+output=$(./run pwd 2>&1) || {
+    echo "FAIL: ./run pwd failed"
+    echo "Output: $output"
+    fail=1
+}
 # Should use .git (first match), not pwd
 case "$output" in
     *"Mount directive: Using git root directory"*)

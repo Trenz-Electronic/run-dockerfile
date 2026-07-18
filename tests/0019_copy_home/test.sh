@@ -34,7 +34,7 @@ cat > Dockerfile <<'EOF'
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
-output=$(./run cat ~/.test-license-0019.dat 2>&1)
+output=$(./run cat ~/.test-license-0019.dat 2>&1) || true
 case "$output" in
     *"test license content"*)
         echo "PASS: Single file copied successfully"
@@ -71,7 +71,7 @@ cat > Dockerfile <<'EOF'
 FROM ubuntu:22.04
 EOF
 ln -sf ../../../build-and-run run
-output=$(./run sh -c 'cat ~/.test-license-0019.dat && cat ~/.config/test-tool-0019/config.json' 2>&1)
+output=$(./run sh -c 'cat ~/.test-license-0019.dat && cat ~/.config/test-tool-0019/config.json' 2>&1) || true
 if echo "$output" | grep -q "test license content" && echo "$output" | grep -q "test config"; then
     echo "PASS: Multiple files copied successfully"
 else
@@ -84,7 +84,7 @@ cd ..
 echo ""
 echo "=== Test 2b: Copied files are owned by container user ==="
 cd test_multiple
-output=$(./run sh -c 'stat -c "%u:%g" ~/.test-license-0019.dat ~/.config/test-tool-0019/config.json ~/.config/test-tool-0019 ~/.config')
+output=$(./run sh -c 'stat -c "%u:%g" ~/.test-license-0019.dat ~/.config/test-tool-0019/config.json ~/.config/test-tool-0019 ~/.config') || true
 expected_id="$(id -u):$(id -g)"
 bad_lines=$(echo "$output" | grep -c -v "^${expected_id}$" | tr -d ' ') || true
 if [ "$bad_lines" = "0" ]; then

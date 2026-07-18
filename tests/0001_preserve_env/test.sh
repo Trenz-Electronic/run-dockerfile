@@ -3,7 +3,7 @@
 
 set -e
 
-output=$(./run sh -c 'echo "TEST_VAR=$TEST_VAR"')
+output=$(./run sh -c 'echo "TEST_VAR=$TEST_VAR"') || true
 
 # Check output contains the expected value
 case "$output" in

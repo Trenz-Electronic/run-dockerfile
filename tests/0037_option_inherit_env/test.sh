@@ -16,7 +16,7 @@ fail=0
 
 # 1. Inherit form carries the host value through to the command.
 export DB_INHERIT_VALUE=carried_through
-output=$(./run sh -c 'echo "value=[$DB_INHERIT_VALUE]"')
+output=$(./run sh -c 'echo "value=[$DB_INHERIT_VALUE]"') || true
 case "$output" in
     *"value=[carried_through]"*) echo "PASS: inherit-form -e VAR carries the host value" ;;
     *) echo "FAIL: inherit-form value not carried - got: $output"; fail=1 ;;
@@ -24,7 +24,7 @@ esac
 
 # 2. Inherit form is added to the preserve list even when the variable is unset on
 #    the host: the container defines it (empty). Old code left it unset.
-output=$(env -u DB_INHERIT_UNSET ./run sh -c 'echo "set=[${DB_INHERIT_UNSET+SET}]"')
+output=$(env -u DB_INHERIT_UNSET ./run sh -c 'echo "set=[${DB_INHERIT_UNSET+SET}]"') || true
 case "$output" in
     *"set=[SET]"*) echo "PASS: inherit-form -e VAR added to preserve list (defined even when unset on host)" ;;
     *) echo "FAIL: inherit-form -e VAR not preserved - got: $output"; fail=1 ;;
@@ -32,7 +32,7 @@ esac
 
 # 3. Sanity: a variable never declared via #option stays unset (so check 2 is
 #    proving the directive's effect, not some blanket behavior).
-output=$(./run sh -c 'echo "undeclared=[${DB_NOT_DECLARED+SET}]"')
+output=$(./run sh -c 'echo "undeclared=[${DB_NOT_DECLARED+SET}]"') || true
 case "$output" in
     *"undeclared=[]"*) echo "PASS: undeclared variable stays unset" ;;
     *) echo "FAIL: undeclared variable unexpectedly set - got: $output"; fail=1 ;;

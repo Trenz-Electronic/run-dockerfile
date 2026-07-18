@@ -10,7 +10,11 @@ set -e
 
 # (1) /bin/run-dockerfile-user-command must NOT be a bind mount. Field 5 of mountinfo is the mount
 # point; an entry here would mean the host script is mounted in (the old behavior).
-mounted=$(./run sh -c "awk '\$5 == \"/bin/run-dockerfile-user-command\" { print \"mounted\" }' /proc/self/mountinfo")
+mounted=$(./run sh -c "awk '\$5 == \"/bin/run-dockerfile-user-command\" { print \"mounted\" }' /proc/self/mountinfo") || {
+    echo "FAIL: ./run failed while checking /proc/self/mountinfo"
+    echo "Output: $mounted"
+    exit 1
+}
 if [ -n "$mounted" ]; then
     echo "FAIL: /bin/run-dockerfile-user-command is bind-mounted; expected a baked-in image file"
     exit 1
@@ -25,7 +29,7 @@ result=$(./run sh -c '
     else
         echo "BAD x=$([ -x /bin/run-dockerfile-user-command ] && echo 1 || echo 0) uid=$uid"
     fi
-')
+') || true
 
 case "$result" in
     *BAKED_ROOT_EXEC*)

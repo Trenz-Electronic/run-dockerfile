@@ -17,9 +17,9 @@ host_gid=$(id -g)
 fail=0
 
 # 1. $USER unset: the user must still be mapped from `id`.
-container_user=$(env -u USER ./run id -un)
-container_uid=$(env -u USER ./run id -u)
-container_gid=$(env -u USER ./run id -g)
+container_user=$(env -u USER ./run id -un) || { echo "FAIL: env -u USER ./run id -un failed"; exit 1; }
+container_uid=$(env -u USER ./run id -u) || { echo "FAIL: env -u USER ./run id -u failed"; exit 1; }
+container_gid=$(env -u USER ./run id -g) || { echo "FAIL: env -u USER ./run id -g failed"; exit 1; }
 
 if [ -z "$container_user" ]; then
     echo "FAIL: container username is empty when \$USER is unset"
@@ -40,7 +40,7 @@ if [ "$container_gid" != "$host_gid" ]; then
 fi
 
 # 2. A stale/wrong $USER must not leak into the mapping: identity comes from `id`.
-container_user_bogus=$(USER=definitely_not_the_user ./run id -un)
+container_user_bogus=$(USER=definitely_not_the_user ./run id -un) || { echo "FAIL: ./run id -un with stale USER failed"; exit 1; }
 if [ "$container_user_bogus" != "$host_user" ]; then
     echo "FAIL: stale \$USER leaked into mapping: expected=$host_user container=$container_user_bogus"
     fail=1

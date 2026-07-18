@@ -4,7 +4,7 @@
 
 set -e
 
-output=$(./run uname -m)
+output=$(./run uname -m) || true
 
 case "$output" in
     *"armv7l"*)

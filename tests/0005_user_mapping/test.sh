@@ -9,11 +9,11 @@ host_group=$(id -gn)
 host_uid=$(id -u)
 host_gid=$(id -g)
 
-container_user=$(./run id -un)
-container_group=$(./run id -gn)
-container_uid=$(./run id -u)
-container_gid=$(./run id -g)
-container_groups=$(./run cat /etc/group)
+container_user=$(./run id -un) || { echo "FAIL: ./run id -un failed"; exit 1; }
+container_group=$(./run id -gn) || { echo "FAIL: ./run id -gn failed"; exit 1; }
+container_uid=$(./run id -u) || { echo "FAIL: ./run id -u failed"; exit 1; }
+container_gid=$(./run id -g) || { echo "FAIL: ./run id -g failed"; exit 1; }
+container_groups=$(./run cat /etc/group) || { echo "FAIL: ./run cat /etc/group failed"; exit 1; }
 
 fail=0
 

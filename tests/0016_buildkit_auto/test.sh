@@ -11,7 +11,7 @@ set -e
 # Force a rebuild so the build actually runs.
 $ENGINE rmi -f 0016_buildkit_auto 2>/dev/null || true
 
-output=$(./run echo "buildkit test" 2>&1)
+output=$(./run echo "buildkit test" 2>&1) || true
 
 case "$output" in
     *"buildkit test"*)

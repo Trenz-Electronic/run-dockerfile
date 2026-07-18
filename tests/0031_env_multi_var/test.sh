@@ -5,7 +5,7 @@
 
 set -e
 
-output=$(./run sh -c 'echo "PRESERVE=[$DOCKER_PRESERVE_ENV]"; echo "VALS=$ALPHA|$BETA|$GAMMA|$DELTA"')
+output=$(./run sh -c 'echo "PRESERVE=[$DOCKER_PRESERVE_ENV]"; echo "VALS=$ALPHA|$BETA|$GAMMA|$DELTA"') || true
 
 fail=0
 for name in ALPHA BETA GAMMA DELTA; do

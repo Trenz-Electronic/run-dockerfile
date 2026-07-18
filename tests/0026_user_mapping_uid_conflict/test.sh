@@ -24,8 +24,8 @@ EOF
 
 $ENGINE build -f Dockerfile.tmp -t 0026_user_mapping_uid_conflict . >/dev/null 2>&1
 
-container_uid=$(./run id -u 2>/dev/null)
-container_gid=$(./run id -g 2>/dev/null)
+container_uid=$(./run id -u 2>/dev/null) || { echo "FAIL: ./run id -u failed"; exit 1; }
+container_gid=$(./run id -g 2>/dev/null) || { echo "FAIL: ./run id -g failed"; exit 1; }
 
 rm -f Dockerfile.tmp
 

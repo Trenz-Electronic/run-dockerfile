@@ -44,11 +44,11 @@ EOF
 
 $ENGINE build -f Dockerfile.tmp -t 0039_user_group_fallback_collision . >/dev/null 2>&1
 
-container_uid=$(./run id -u)
-container_gid=$(./run id -g)
-container_user=$(./run id -un)
-container_groups=$(./run cat /etc/group)
-container_passwd=$(./run cat /etc/passwd)
+container_uid=$(./run id -u) || { echo "FAIL: ./run id -u failed"; exit 1; }
+container_gid=$(./run id -g) || { echo "FAIL: ./run id -g failed"; exit 1; }
+container_user=$(./run id -un) || { echo "FAIL: ./run id -un failed"; exit 1; }
+container_groups=$(./run cat /etc/group) || { echo "FAIL: ./run cat /etc/group failed"; exit 1; }
+container_passwd=$(./run cat /etc/passwd) || { echo "FAIL: ./run cat /etc/passwd failed"; exit 1; }
 
 fail=0
 

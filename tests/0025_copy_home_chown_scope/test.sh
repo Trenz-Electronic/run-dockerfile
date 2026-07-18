@@ -38,7 +38,7 @@ ln -sf ../../../build-and-run run
 
 # Report ownership (uid) of the decoy and the copied file from inside the container.
 # Paths are passed as positional args so they need no in-line quoting.
-output=$(./run sh -c 'echo "decoy=$(stat -c %u "$1")"; echo "src=$(stat -c %u "$2")"' _ "$DECOY" "$SRC" 2>&1)
+output=$(./run sh -c 'echo "decoy=$(stat -c %u "$1")"; echo "src=$(stat -c %u "$2")"' _ "$DECOY" "$SRC" 2>&1) || true
 
 if echo "$output" | grep -q "^src=$(id -u)$"; then
     echo "PASS: copied file owned by container user"

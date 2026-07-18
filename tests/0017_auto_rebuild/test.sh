@@ -21,7 +21,7 @@ $ENGINE rmi -f 0017_auto_rebuild 2>/dev/null || true
 cd 0017_auto_rebuild
 
 echo "=== Test 1: First build (image not found) ==="
-output=$(./run echo "first build" 2>&1)
+output=$(./run echo "first build" 2>&1) || true
 case "$output" in
     *"not found, rebuilding"*"first build"*)
         echo "PASS: Initial build triggered"
@@ -47,7 +47,7 @@ fi
 
 echo ""
 echo "=== Test 3: Second run with no changes (should skip rebuild) ==="
-output=$(./run echo "no rebuild" 2>&1)
+output=$(./run echo "no rebuild" 2>&1) || true
 case "$output" in
     *"rebuilding"*)
         echo "FAIL: Unexpected rebuild when nothing changed"
@@ -70,7 +70,7 @@ echo "=== Test 4: Modify Dockerfile (should trigger rebuild) ==="
 # Save original Dockerfile
 cp Dockerfile Dockerfile.backup
 echo "# test comment" >> Dockerfile
-output=$(./run echo "after dockerfile change" 2>&1)
+output=$(./run echo "after dockerfile change" 2>&1) || true
 case "$output" in
     *"changes detected"*"after dockerfile change"*)
         echo "PASS: Dockerfile change triggered rebuild"
@@ -95,7 +95,7 @@ mv Dockerfile.backup Dockerfile
 echo ""
 echo "=== Test 5: Add context file (should trigger rebuild) ==="
 echo "test content" > test_file.txt
-output=$(./run echo "after context change" 2>&1)
+output=$(./run echo "after context change" 2>&1) || true
 case "$output" in
     *"changes detected"*"after context change"*)
         echo "PASS: Context file change triggered rebuild"
@@ -122,13 +122,17 @@ echo "=== Test 6: Rebuild to get new hash after file removed ==="
 # After test 5, we removed test_file.txt, so context is different from the current image
 # The current image was built with test_file.txt present
 # We need to rebuild to match the new context (file removed)
-output=$(./run echo "rebuild after removal" 2>&1)
+output=$(./run echo "rebuild after removal" 2>&1) || {
+    echo "FAIL: rebuild-after-removal run failed"
+    echo "Output: $output"
+    fail=1
+}
 # This should rebuild because test_file.txt was removed
-echo "Rebuild triggered (expected): $?"
+echo "Rebuild triggered (expected)"
 
 echo ""
 echo "=== Test 7: Verify no further rebuilds ==="
-output=$(./run echo "final run" 2>&1)
+output=$(./run echo "final run" 2>&1) || true
 case "$output" in
     *"rebuilding"*)
         echo "FAIL: Unexpected rebuild when context stable"
@@ -151,7 +155,11 @@ echo "=== Test 8: Renaming a context file triggers rebuild (filename in hash) ==
 echo "rename-content" > rename_me.txt
 ./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
 mv rename_me.txt renamed.txt                         # same content, different name
-output=$(./run echo "after rename" 2>&1)
+output=$(./run echo "after rename" 2>&1) || {
+    echo "FAIL: after-rename run failed"
+    echo "Output: $output"
+    fail=1
+}
 if echo "$output" | grep -q "rebuilding\|changes detected"; then
     echo "PASS: Rename triggered rebuild"
 else
@@ -167,7 +175,11 @@ echo "#!/bin/sh" > mode_test.sh
 chmod 644 mode_test.sh
 ./run echo "sync baseline" >/dev/null 2>&1 || true   # rebuild so image matches context
 chmod 755 mode_test.sh                               # mode change only, same content
-output=$(./run echo "after chmod" 2>&1)
+output=$(./run echo "after chmod" 2>&1) || {
+    echo "FAIL: after-chmod run failed"
+    echo "Output: $output"
+    fail=1
+}
 if echo "$output" | grep -q "rebuilding\|changes detected"; then
     echo "PASS: chmod triggered rebuild"
 else
