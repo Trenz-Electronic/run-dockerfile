@@ -54,6 +54,8 @@ Pull requests should summarize problem and solution, list exact test commands,
 note Docker platform limitations, link issues, and include docs for user-visible
 changes.
 
+Do not refer to the discussions with Claude, as they are generally not public.
+
 ## Security & Configuration Tips
 
 Treat Dockerfile directives as data, not shell code. Avoid `eval`; preserve
