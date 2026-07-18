@@ -88,6 +88,13 @@ cleanup() {
         $ENGINE rm -f "$name" 2>/dev/null || true
         $ENGINE rmi -f "$name" "$name.user-command" 2>/dev/null || true
     done
+    # The platform tests (0002-0004) build FROM alpine:3.22, a tag reserved for
+    # them: an explicit --platform pull retags the base tag in the engine's
+    # shared store, so pulling into alpine:latest would poison every later
+    # non-platform test with a foreign-arch image (Podman only warns; Docker
+    # re-resolves). Remove the reserved tag last, after the dependent test
+    # images above are gone.
+    $ENGINE rmi -f alpine:3.22 2>/dev/null || true
 }
 
 find_test_dir() {

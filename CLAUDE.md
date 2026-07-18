@@ -189,6 +189,8 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 
 **Note:** Tests use a special structure (inside `tests/` directory) for testing purposes. The recommended user pattern is to place containers in a `containers/` directory at the project root, not inside the `run-dockerfile/` submodule. See README.md "Project Structure" section for details.
 
+**Reserved base tag for platform tests:** tests that pass an explicit `--platform` (0002–0004) build `FROM alpine:3.22`, a tag reserved for them, never `alpine:latest` — under Podman an explicit-platform pull retags the base in the shared image store, which would poison every later non-platform `FROM alpine:latest` test with a foreign-arch image (0020 broke exactly this way under QEMU: user-mode emulation does not honor setuid, so `sudo` failed). `tests/run`'s `cleanup()` removes `alpine:3.22` after the per-test images so the foreign-arch base does not linger in the host's store.
+
 ### Test Cases
 
 - `0001_preserve_env` - Tests ENV vars from Dockerfile are preserved across the internal `su` drop
