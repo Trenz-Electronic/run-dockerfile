@@ -107,6 +107,7 @@ run-dockerfile drives **Docker or Podman**. The engine is never hardcoded: every
 
 Per-engine differences handled in the host driver:
 
+- **Image names are `localhost/<dir>` under Podman.** Right after `resolve_engine`, `tag` becomes `localhost/${tag}` when `ENGINE_KIND = podman` (`run_tag` and the bake's `FROM` follow from it). Podman stores locally built images under `localhost/` anyway, so existing images are found without a rebuild. The qualified name skips short-name resolution: with several `unqualified-search-registries` (the Fedora default) and a TTY, a bare name made rootful Podman prompt for a registry instead of using the local image. Docker keeps the bare name, so Docker users' existing images stay valid. The directory-name check runs on the bare name, before the prefix. Regression-tested by `tests/0048`.
 - **`--progress=plain`** is a Docker/BuildKit flag (Podman `build` has no `--progress`); it is added only when `ENGINE_KIND = docker` (`PROGRESS_ARGS`).
 - **Build output goes to stderr** (`"${BUILD_CMD[@]}" >&2`, likewise the derive build): Podman writes build progress and the image id to **stdout**, which would otherwise contaminate `$(./run cmd)` on a build-triggering invocation. Docker/BuildKit already writes to stderr, so this is a no-op there.
 - **`#http.static:` host address is engine-aware:** Docker uses the `docker0` bridge gateway IP; Podman build containers are not on that bridge, so `HOST_IP="host.containers.internal"` (which Podman injects into build containers) is used instead. `--add-host=...:host-gateway` is deliberately **not** used — Buildah 1.28 rejects the `host-gateway` keyword.
@@ -240,6 +241,7 @@ Tests live in `tests/NNNN_name/` directories (numbered for ordering):
 - `0045_rootless_directive` - Tests the `#run-dockerfile: rootless --userns=<mode>` directive (forces bare `podman` + verbatim userns arg; mandatory well-formed value; prefix-only; honored after line 20; conflict with `RUN_DOCKERFILE_ENGINE=docker` and missing-podman are hard errors) via stubs, no daemon
 - `0046_rootless_ownership` - Integration test: under real rootless Podman with `--userns=keep-id`, a bind-mounted file written by the in-container host-matching user is owned by the **host UID** (not a subuid). Declares `# caps: rootless-podman` (runs only in the rootless-Podman cell) and self-skips via the shared `skip()` (exit 77) where rootless Podman cannot actually start (no podman, or an unprivileged LXC container)
 - `0047_rootless_env_override` - Tests the `RUN_DOCKERFILE_USERNS` global rootless override (forces bare `podman` + `--userns=<mode>`; a `#run-dockerfile: rootless` directive still wins; conflict with `RUN_DOCKERFILE_ENGINE=docker` and an invalid mode are hard errors) via stubs, no daemon
+- `0048_podman_localhost_tag` - Tests images are built and run as `localhost/<dir>` under Podman and as bare `<dir>` under Docker (stub engine logs its calls), no daemon
 
 ### Capability tags and the engine/OS support matrix
 

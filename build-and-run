@@ -681,6 +681,15 @@ resolve_engine() {
 }
 resolve_engine
 
+# Under Podman, address images as localhost/<name>. That is where Podman stores
+# locally built images, and a qualified name skips short-name resolution: with
+# several unqualified-search-registries (the Fedora default) and a TTY, a bare
+# name can make Podman prompt for a registry instead of using the local image.
+# Docker keeps the bare name so existing Docker images stay valid.
+if [ "$ENGINE_KIND" = podman ]; then
+  tag="localhost/${tag}"
+fi
+
 # Podman's `build` has no --progress flag (it streams build output by default);
 # only Docker/BuildKit accepts --progress=plain. Gate it on the engine kind.
 PROGRESS_ARGS=()

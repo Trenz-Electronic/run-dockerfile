@@ -460,7 +460,7 @@ my-project/
 
 As long as each container directory's `run` symlink points to `run-dockerfile/build-and-run`, it works.
 
-**Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); run-dockerfile checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild.
+**Image naming:** Each container directory name becomes the Docker image tag — `containers/build-env/` builds an image named `build-env`. It must therefore be a valid lowercase Docker image name matching `[a-z0-9][a-z0-9._-]*` (use `build-env`, not `Build_Env`); run-dockerfile checks this up front and exits with a clear message if the name is invalid. This is also the name to pass to `docker rmi <image-name>` when forcing a rebuild. Under Podman the image is named `localhost/<name>` (e.g. `localhost/build-env`), which is where Podman keeps locally built images anyway; use that name with `podman rmi`.
 
 ## Container engine: Podman or Docker
 
